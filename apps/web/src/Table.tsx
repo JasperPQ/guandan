@@ -15,7 +15,7 @@ import {
   type Seat,
   type SeatAction,
 } from "@guandan/game";
-import CardView, { cardName } from "./CardView.js";
+import CardView, { cardName, preloadCardImages } from "./CardView.js";
 import GameRules from "./GameRules.js";
 
 const PLACE_NAMES = ["头游", "二游", "三游", "末游"];
@@ -134,6 +134,7 @@ function Table({
   onRematch: (accept: boolean) => void;
   onDissolve: () => void;
 }) {
+  useEffect(preloadCardImages, []);
   const match = room.match!;
   const hand = match.hand;
   const mySeat = match.mySeat ?? 0;

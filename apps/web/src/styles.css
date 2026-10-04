@@ -201,35 +201,34 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .card {
   position: relative;
   width: var(--card-w);
-  height: calc(var(--card-w) * 1.42);
+  height: calc(var(--card-w) * 1.4);
   flex: 0 0 auto;
   display: block;
-  overflow: hidden;
-  border: 1px solid #cfc9ba;
-  border-radius: 7px;
+  border: 0;
+  border-radius: 6% / 4.3%;
   padding: 0;
-  color: #22302a;
-  background: linear-gradient(170deg, #ffffff, #f4f0e6);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18);
+  background: none;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
   font: inherit;
-  text-align: left;
   transition: transform 110ms ease, box-shadow 110ms ease;
 }
+.card img { display: block; width: 100%; height: 100%; pointer-events: none; user-select: none; }
+/* 级牌、逢人配的边框画在图片上层 */
+.card::after { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; content: ""; }
 button.card { cursor: pointer; }
 button.card:hover { transform: translateY(-4px); }
-.card-red { color: #c0392b; }
-.card-corner { position: absolute; top: 5%; left: 8%; display: flex; flex-direction: column; align-items: center; line-height: 1; }
-.card-corner b { font-size: calc(var(--card-w) * 0.3); font-weight: 800; letter-spacing: -0.04em; }
-.card-corner i { font-size: calc(var(--card-w) * 0.24); font-style: normal; }
-.card-pip { position: absolute; right: 8%; bottom: 4%; font-size: calc(var(--card-w) * 0.5); line-height: 1; opacity: 0.85; }
-.card-joker { background: linear-gradient(170deg, #fffaf0, #f3e7cf); }
-.card-joker-text { position: absolute; top: 6%; left: 9%; width: min-content; font-size: calc(var(--card-w) * 0.2); font-weight: 800; line-height: 0.98; text-align: center; word-break: break-all; }
-.card-level { box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18), inset 0 0 0 2px rgba(214, 180, 108, 0.55); }
-.card-wild { border-color: #c9a24f; background: linear-gradient(170deg, #fffbea, #f6e6b6); box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18), inset 0 0 0 2px #d6b46c; }
-.card-wild-badge { position: absolute; right: 6%; top: 5%; border-radius: 4px; padding: 1px 3px; color: #fff; background: #c9a24f; font-size: calc(var(--card-w) * 0.17); font-weight: 800; }
-.card-selected { transform: translateY(-16px); border-color: #d6b46c; box-shadow: 0 0 0 2px #f4d27c, 0 6px 14px rgba(0, 0, 0, 0.25); }
+.card-index { position: absolute; top: 2.5%; left: 3%; display: flex; flex-direction: column; align-items: center; border-radius: 3px; padding: 1px 1px 2px; color: #111; background: #fff; font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; line-height: 0.95; }
+.card-index.red { color: #d0021b; }
+.card-index b { font-size: calc(var(--card-w) * 0.26); font-weight: 700; letter-spacing: -0.06em; }
+.card-index i { font-size: calc(var(--card-w) * 0.2); font-style: normal; }
+.card-joker-text { position: absolute; top: 5%; left: 7%; width: min-content; color: #1f2b26; font-size: calc(var(--card-w) * 0.2); font-weight: 800; line-height: 0.98; text-align: center; word-break: break-all; }
+.card-red .card-joker-text { color: #c0392b; }
+.card-level::after { box-shadow: inset 0 0 0 2px rgba(214, 180, 108, 0.85); }
+.card-wild::after { background: rgba(246, 222, 150, 0.16); box-shadow: inset 0 0 0 3px #d6b46c; }
+.card-wild-badge { position: absolute; right: 6%; top: 4%; border-radius: 4px; padding: 1px 3px; color: #fff; background: #c9a24f; font-size: calc(var(--card-w) * 0.17); font-weight: 800; }
+.card-selected { transform: translateY(-16px); box-shadow: 0 0 0 2px #f4d27c, 0 6px 14px rgba(0, 0, 0, 0.25); }
 button.card-selected:hover { transform: translateY(-18px); }
-.card-dimmed { opacity: 0.38; }
+.card-dimmed { filter: grayscale(0.85) brightness(0.72); }
 .card-small { --card-w: clamp(40px, 3.6vw, 58px); }
 
 .chat-area { grid-area: chat; min-height: 0; display: flex; }
