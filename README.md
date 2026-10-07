@@ -41,3 +41,7 @@ npm run typecheck
 - 还有红、蓝两种牌背，以及德州扑克的像素牌桌、筹码、庄家按钮（导出到 texas-holdem 的 `src/assets/pixel/`）。
 
 PixelLab 密钥只在 `~/.config/pixellab/api_key`，不进仓库；花费记在 `art/ledger.jsonl`。人像选图画廊：`python art/gallery.py`，再 `python -m http.server 8768 --directory art/out`。
+
+## 服务器上的启动方式
+
+pm2 按仓库根目录的 `ecosystem.config.cjs` 直接启动一个 `node --import tsx` 进程跑服务端（不经过 `npm start`），每个游戏省下一百多 MB 内存。端口和密钥存在 pm2 里，不进仓库；`deploy.sh` 照旧 `pm2 restart`。改了 `ecosystem.config.cjs` 之后，要在服务器上带着原来的环境变量 `pm2 delete` 再 `pm2 start ecosystem.config.cjs` 一次。
