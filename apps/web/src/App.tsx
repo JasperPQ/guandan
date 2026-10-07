@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { rankLabel, type AckResponse, type LobbyRoomSnapshot, type MatchAction, type PublicRoomSummary, type Seat } from "@guandan/game";
 import AdminBar, { adminEntryEnabled, useAdminToken } from "./AdminBar.js";
+import { cardImage } from "./CardView.js";
+import { useBoardStyle } from "./boardStyle.js";
+import { useConfirm } from "./confirm.js";
 import GameRules from "./GameRules.js";
+import { PixelContext } from "./pixel.js";
+// 像素风皮肤：只在像素版时放进页面，叠在原始的 styles.css 上；切回原始版本时整份移除。
+import pixelCss from "./guandan-pixel.css?inline";
 import RoomChat from "./RoomChat.js";
 import Table from "./Table.js";
 import { socket } from "./socket.js";
@@ -23,6 +29,20 @@ function Brand() {
       <span className="brand-mark" aria-hidden="true">♠</span>
       <span className="brand-name">掼蛋</span>
     </a>
+  );
+}
+
+/** 顶栏的画面切换按钮：像素版 ⇄ 原始版本，只影响自己看到的画面（和宝石商人、游戏中心共用同一个选择）。 */
+function StyleToggle({ pixel, onToggle }: { pixel: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="quiet-button style-toggle"
+      onClick={onToggle}
+      title={pixel ? "换回原始版本的画面（只影响你自己看到的）" : "换成像素风画面（只影响你自己看到的）"}
+    >
+      {pixel ? "切换原版" : "切换像素版"}
+    </button>
   );
 }
 
@@ -153,6 +173,24 @@ function App() {
   const [notice, setNotice] = useState("");
   const [lobbyRooms, setLobbyRooms] = useState<PublicRoomSummary[]>([]);
   const voice = useVoice(room);
+  // 画面风格（默认像素版）：首页、等待大厅、牌桌共用，顶栏按钮随时切换。
+  const [boardStyle, toggleBoardStyle] = useBoardStyle();
+  const pixel = boardStyle === "pixel";
+  const pixelSkin = pixel && <style>{pixelCss}</style>;
+  const styleToggle = <StyleToggle pixel={pixel} onToggle={toggleBoardStyle} />;
+  // 解散房间等确认：像素版用像素弹窗，原始版本照旧用浏览器确认框。
+  const [confirm, confirmDialog] = useConfirm(pixel);
+  // 手机浏览器地址栏的颜色跟着画面风格走。
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta || !pixel) return;
+    const original = meta.getAttribute("content");
+    meta.setAttribute("content", "#0e0c13");
+    return () => {
+      if (original === null) meta.removeAttribute("content");
+      else meta.setAttribute("content", original);
+    };
+  }, [pixel]);
 
   // 在房间里时服务端不推送在线牌桌列表；回到首页时主动拉一次最新的。
   useEffect(() => {
@@ -241,9 +279,14 @@ function App() {
 
   const kickMember = (memberId: string) => roomCommand((ack) => socket.emit("room:kick", memberId, ack));
   const voteRematch = (accept: boolean) => roomCommand((ack) => socket.emit("room:rematch", accept, ack));
-  function dissolveRoom() {
-    if (!window.confirm("确定解散房间吗？所有玩家都会被移出，当前对局也会结束。")) return;
-    roomCommand((ack) => socket.emit("room:dissolve", ack));
+  async function dissolveRoom() {
+    const ok = await confirm({
+      title: "解散房间？",
+      detail: "所有玩家都会被移出，当前对局也会结束。",
+      confirmLabel: "解散",
+      classicText: "确定解散房间吗？所有玩家都会被移出，当前对局也会结束。",
+    });
+    if (ok) roomCommand((ack) => socket.emit("room:dissolve", ack));
   }
 
   async function copyRoomCode() {
@@ -258,29 +301,37 @@ function App() {
 
   if (room?.status === "playing" && room.match) {
     return (
-      <main className="game-shell">
-        <Table
-          room={room}
-          busy={busy}
-          error={error}
-          notice={notice}
-          brand={<Brand />}
-          connection={<ConnectionStatus connected={connected} />}
-          chat={<RoomChat room={room} voice={voice} />}
-          onAction={sendAction}
-          onRematch={voteRematch}
-          onDissolve={dissolveRoom}
-        />
-      </main>
+      <PixelContext.Provider value={pixel}>
+        <main className="game-shell">
+          {pixelSkin}
+          <Table
+            room={room}
+            busy={busy}
+            error={error}
+            notice={notice}
+            brand={<Brand />}
+            connection={<ConnectionStatus connected={connected} />}
+            styleToggle={styleToggle}
+            chat={<RoomChat room={room} voice={voice} />}
+            onAction={sendAction}
+            onRematch={voteRematch}
+            onDissolve={dissolveRoom}
+          />
+          {confirmDialog}
+        </main>
+      </PixelContext.Provider>
     );
   }
 
   return (
+    <PixelContext.Provider value={pixel}>
     <main className="app-shell">
+      {pixelSkin}
       <header className="topbar">
         <Brand />
         <div className="topbar-right">
           {!room && <a className="center-link" href={CENTER_URL}>← 游戏中心</a>}
+          {styleToggle}
           <ConnectionStatus connected={connected} />
         </div>
       </header>
@@ -309,6 +360,13 @@ function App() {
               <div className="eyebrow">在线对战 · 4 人两队</div>
               <h1>掼蛋</h1>
               <p>创建一张牌桌，或输入房间码加入朋友的对局。两副牌、逢人配、从 2 打到 A。</p>
+              {pixel && (
+                <div className="gd-card-fan" aria-hidden="true">
+                  {[{ suit: "J", rank: 17 }, { suit: "S", rank: 14 }, { suit: "H", rank: 13 }, { suit: "H", rank: 2 }].map((card) => (
+                    <img key={`${card.suit}${card.rank}`} src={cardImage({ id: "", ...card } as Parameters<typeof cardImage>[0], true)} alt="" />
+                  ))}
+                </div>
+              )}
             </div>
             <section className="entry-card" aria-label="进入牌桌">
               <div className="mode-switch" role="tablist">
@@ -337,7 +395,9 @@ function App() {
           </section>
         </>
       )}
+      {confirmDialog}
     </main>
+    </PixelContext.Provider>
   );
 }
 

@@ -1,0 +1,367 @@
+/*
+ * 掼蛋的像素风皮肤：首页、等待大厅、牌桌。只在像素版时放进页面，叠在原始的 styles.css 上面；
+ * 切回原始版本时整份移除，styles.css 本身不改。配色、边框、字体和宝石商人 / 游戏中心的像素版一致。
+ * 原样式的选择器多是单个类，这里统一加 .app-shell / .game-shell 前缀压过它们。
+ * 字号只用 12 的整数倍才清晰；边框用多层硬 box-shadow（四边黑边、角上留空），粗细用 --px。
+ */
+
+@font-face {
+  font-family: "Fusion Pixel";
+  src: url("./assets/pixel/fusion-pixel-12px-zh_hans.woff2") format("woff2");
+  font-display: swap;
+}
+
+:root { color-scheme: dark; background: #0e0c13; }
+body { background: repeating-conic-gradient(#13101a 0 25%, #0e0c13 0 50%) 0 0 / 4px 4px; }
+
+.app-shell, .game-shell {
+  --px: 2px;
+  --bg: #0e0c13;
+  --panel: #1c1826;
+  --panel-2: #262033;
+  --edge: #050408;
+  --rim: #4a3f63;
+  --shade: #0b0a10;
+  --text: #f1ece0;
+  --muted: #9a93ad;
+  --gold: #f0c050;
+  --gold-2: #b3821c;
+  --ok: #62c97a;
+  --bad: #f25c5c;
+  --felt: #1f5c40;
+  --felt-2: #1b5239;
+  --wood: #6f4f37;
+  --wood-hi: #9a7050;
+  --team-0: #e0644a;
+  --team-1: #4f8fd8;
+  color: var(--text);
+  font-family: "Fusion Pixel", -apple-system, "PingFang SC", sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+.app-shell :is(button, input), .game-shell :is(button, input) { font-family: inherit; font-size: 12px; letter-spacing: 0; }
+.app-shell *, .game-shell * { scrollbar-color: var(--rim) var(--bg); scrollbar-width: thin; }
+.app-shell :focus-visible, .game-shell :focus-visible { outline: var(--px) solid var(--gold); outline-offset: calc(var(--px) * 2); }
+
+/* ---------- 像素边框 ---------- */
+:is(.app-shell, .game-shell) :is(
+  .entry-card, .online-table, .status-chip, .text-input, .primary-button, .quiet-button, .kick-button, .dissolve-button,
+  .room-code-button, .seat-choice, .game-rules-toggle, .game-rules-panel, .room-chat, .room-chat-list, .room-chat-message,
+  .room-chat-input, .room-chat-send, .voice-bar, .voice-button, .voice-person, .admin-bar, .admin-bar-button, .admin-dissolve,
+  .room-code-chip, .level-chip, .turn-indicator, .seat-plate, .seat-tag, .seat-count, .seat-place, .my-area, .result-panel,
+  .ready-chip, .pass-tag, .tribute-note, .gm-panel, .card-wild-badge
+) {
+  border: 0;
+  border-radius: 0;
+  box-shadow:
+    0 calc(var(--px) * -1) 0 0 var(--edge),
+    0 var(--px) 0 0 var(--edge),
+    calc(var(--px) * -1) 0 0 0 var(--edge),
+    var(--px) 0 0 0 var(--edge),
+    inset var(--px) var(--px) 0 0 var(--rim),
+    inset calc(var(--px) * -1) calc(var(--px) * -1) 0 0 var(--shade);
+}
+
+/* ---------- 按钮：靛蓝（普通）、金色（主要）、红色（危险）；按下时下沉一格 ---------- */
+:is(.app-shell, .game-shell) :is(.quiet-button, .game-rules-toggle, .admin-bar-button, .voice-button) {
+  --rim: #6b5c8f;
+  --shade: #141119;
+  min-height: 0;
+  padding: 6px 12px;
+  color: var(--text);
+  background: #332b44;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+}
+:is(.app-shell, .game-shell) :is(.primary-button, .room-chat-send, .voice-button.join) {
+  --rim: #fff2b8;
+  --shade: #7a5410;
+  min-height: 0;
+  padding: 8px 16px;
+  color: #2a1c06;
+  background: var(--gold);
+  font-size: 12px;
+  font-weight: 400;
+}
+:is(.app-shell, .game-shell) :is(.quiet-button.danger, .kick-button, .admin-dissolve, .dissolve-button) {
+  --rim: #f25c5c;
+  --shade: #3d0a12;
+  padding: 4px 10px;
+  color: #ffd8d0;
+  background: #6e1020;
+  font-size: 12px;
+}
+:is(.app-shell, .game-shell) :is(.primary-button, .quiet-button, .kick-button, .dissolve-button, .admin-bar-button, .admin-dissolve, .game-rules-toggle, .room-chat-send, .voice-button):hover:not(:disabled) {
+  border-color: transparent;
+  color: inherit;
+  transform: none;
+  filter: brightness(1.15);
+}
+:is(.app-shell, .game-shell) .primary-button:hover:not(:disabled) { background: var(--gold); color: #2a1c06; }
+:is(.app-shell, .game-shell) :is(.quiet-button, .game-rules-toggle):hover:not(:disabled) { background: #332b44; color: var(--text); }
+:is(.app-shell, .game-shell) :is(.quiet-button.danger, .kick-button, .dissolve-button):hover:not(:disabled) { background: #6e1020; color: #ffd8d0; }
+:is(.app-shell, .game-shell) :is(.primary-button, .quiet-button, .kick-button, .dissolve-button, .admin-bar-button, .game-rules-toggle, .room-chat-send, .voice-button):active:not(:disabled) {
+  transform: translateY(var(--px));
+  --rim: var(--shade);
+}
+:is(.app-shell, .game-shell) :is(.primary-button, .quiet-button, .room-chat-send, .voice-button, .admin-bar-button):disabled {
+  cursor: default;
+  opacity: 1;
+  filter: grayscale(0.6) brightness(0.7);
+}
+:is(.app-shell, .game-shell) .style-toggle { padding: 6px 10px; }
+
+/* ---------- 顶栏 ---------- */
+.app-shell .topbar { border-bottom: var(--px) solid #332b44; }
+:is(.app-shell, .game-shell) .brand { color: var(--text); gap: 8px; }
+:is(.app-shell, .game-shell) .brand-mark { width: 24px; height: 24px; border-radius: 0; transform: none; color: #fff; background: #1f5c40; font-size: 12px; box-shadow: 0 0 0 var(--px) var(--edge), inset var(--px) var(--px) 0 0 #3f8a62; }
+:is(.app-shell, .game-shell) .brand-name { font-family: inherit; font-size: 12px; font-weight: 400; letter-spacing: 0.1em; }
+:is(.app-shell, .game-shell) .connection-status { gap: 6px; color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .connection-dot { width: 6px; height: 6px; border-radius: 0; background: var(--gold-2); box-shadow: none; }
+:is(.app-shell, .game-shell) .connection-status.online .connection-dot { background: var(--ok); box-shadow: none; }
+.app-shell .center-link { color: var(--muted); font-size: 12px; font-weight: 400; }
+.app-shell .center-link:hover { color: var(--gold); }
+.app-shell .topbar-right { gap: 14px; }
+:is(.app-shell, .game-shell) .team-dot { width: 8px; height: 8px; border-radius: 0; background: var(--team-0); box-shadow: 0 0 0 var(--px) var(--edge); }
+:is(.app-shell, .game-shell) .team-dot.team-1 { background: var(--team-1); }
+
+/* ---------- 规则面板 ---------- */
+:is(.app-shell, .game-shell) .game-rules-toggle > span { color: var(--gold); }
+:is(.app-shell, .game-shell) .game-rules-toggle > i { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .game-rules-panel { --rim: var(--gold-2); padding: 18px 20px; background: var(--panel); }
+:is(.app-shell, .game-shell) .game-rules-block h3 { color: var(--gold); font-family: inherit; font-size: 12px; font-weight: 400; }
+:is(.app-shell, .game-shell) .game-rules-block :is(p, li) { color: var(--text); font-size: 12px; line-height: 1.7; }
+
+/* ---------- 首页 ---------- */
+.app-shell .eyebrow { color: var(--muted); font-size: 12px; font-weight: 400; letter-spacing: 0.1em; }
+.app-shell .welcome h1 {
+  margin: 18px 0 18px;
+  color: var(--gold);
+  font-family: inherit;
+  font-size: 96px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-shadow: calc(var(--px) * 3) calc(var(--px) * 3) 0 var(--edge);
+}
+.app-shell .welcome p { color: var(--muted); font-size: 12px; line-height: 2; }
+/* 首页：一排像素牌（大王、黑桃 A、红桃 K、逢人配红桃 2），2 倍整数放大，用上下错开代替旋转 */
+.app-shell .gd-card-fan { display: flex; margin-top: 36px; }
+.app-shell .gd-card-fan img { width: 82px; height: 114px; image-rendering: pixelated; filter: drop-shadow(var(--px) var(--px) 0 var(--edge)); }
+.app-shell .gd-card-fan img + img { margin-left: -36px; }
+.app-shell .gd-card-fan img:nth-child(2) { transform: translateY(-8px); }
+.app-shell .gd-card-fan img:nth-child(3) { transform: translateY(-12px); }
+.app-shell .gd-card-fan img:nth-child(4) { transform: translateY(-8px); }
+.app-shell .entry-card { --rim: var(--gold-2); padding: 20px 24px 22px; background: var(--panel); }
+.app-shell .mode-switch { border-bottom: var(--px) solid #332b44; }
+.app-shell .mode-tab { color: var(--muted); font-size: 12px; font-weight: 400; }
+.app-shell .mode-tab.active { color: var(--gold); }
+.app-shell .mode-tab.active::after { left: 20%; right: 20%; bottom: calc(var(--px) * -1); height: calc(var(--px) * 2); border-radius: 0; background: var(--gold); }
+.app-shell .field-label { color: var(--text); font-size: 12px; font-weight: 400; }
+.app-shell .text-input { --rim: var(--shade); --shade: #332b44; height: 40px; padding: 0 12px; color: var(--text); background: var(--bg); font-size: 12px; }
+.app-shell .text-input::placeholder { color: #5f5876; }
+.app-shell .text-input:focus { outline: var(--px) solid var(--gold); outline-offset: 0; }
+.app-shell .room-code-input { font-size: 24px; letter-spacing: 0.2em; }
+.app-shell .field-hint { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .feedback { color: var(--ok); font-size: 12px; }
+:is(.app-shell, .game-shell) .error-text { color: var(--bad); }
+.app-shell .entry-form .primary-button { margin-top: 20px; min-height: 44px; }
+.app-shell .online-section { border-top: var(--px) solid #332b44; }
+.app-shell .online-section h2 { color: var(--text); font-family: inherit; font-size: 24px; font-weight: 400; }
+.app-shell .empty-note { color: var(--muted); font-size: 12px; }
+.app-shell .online-table { padding: 12px 14px; background: var(--panel); }
+.app-shell .status-chip { --rim: var(--gold-2); --shade: #2a1c06; padding: 0 8px; color: var(--gold); background: #3a2c10; font-size: 12px; font-weight: 400; }
+.app-shell .status-chip.playing { --rim: var(--ok); --shade: #0b2614; color: #b7f0c0; background: #12452a; }
+.app-shell .online-levels { color: var(--muted); font-size: 12px; }
+.app-shell .online-table li { color: var(--text); font-size: 12px; }
+.app-shell .online-table li.offline { color: var(--muted); }
+.app-shell .admin-bar { --rim: var(--gold-2); padding: 10px 12px; background: #241d16; }
+.app-shell .admin-bar-row { color: var(--gold); font-size: 12px; }
+.app-shell .admin-bar-row .text-input { height: 32px; }
+.app-shell .admin-bar-error { color: var(--bad); font-size: 12px; }
+
+/* ---------- 等待大厅：四个座位围着一张像素毡面小桌 ---------- */
+.app-shell .waiting-head h1 { color: var(--gold); font-family: inherit; font-size: 36px; font-weight: 400; text-shadow: calc(var(--px) * 2) calc(var(--px) * 2) 0 var(--edge); }
+.app-shell .room-code-button { --rim: var(--gold-2); padding: 10px 16px; background: var(--panel); }
+.app-shell .room-code-button span { color: var(--muted); font-size: 12px; }
+.app-shell .room-code-button strong { color: var(--gold); font-size: 24px; font-weight: 400; letter-spacing: 0.15em; }
+.app-shell .seat-table-felt {
+  border: 0;
+  border-radius: 0;
+  background: repeating-conic-gradient(var(--felt) 0 25%, var(--felt-2) 0 50%) 0 0 / 4px 4px;
+  box-shadow:
+    0 0 0 calc(var(--px) * 3) var(--wood),
+    0 0 0 calc(var(--px) * 4) var(--edge),
+    inset 0 0 0 var(--px) var(--wood-hi);
+}
+.app-shell .seat-table-note { color: #cfe8d4; font-size: 12px; }
+.app-shell .seat-choice { --rim: #4a3f63; padding: 10px; color: var(--text); background: var(--panel); }
+.app-shell .seat-choice.taken { --rim: #6b5c8f; background: var(--panel-2); }
+.app-shell .seat-choice.mine { --rim: var(--gold); --shade: #7a5410; background: #3a2c10; }
+.app-shell .seat-choice small { color: var(--muted); font-size: 12px; }
+.app-shell .seat-choice strong { color: var(--text); font-size: 12px; font-weight: 400; }
+.app-shell .seat-choice em { color: var(--gold); font-size: 12px; }
+.app-shell .waiting-hint { color: var(--muted); font-size: 12px; }
+
+/* ---------- 房间对话、语音（等待大厅和牌桌右侧共用） ---------- */
+:is(.app-shell, .game-shell) .room-chat { --rim: #4a3f63; padding: 12px 14px 14px; color: var(--text); background: var(--panel); }
+:is(.app-shell, .game-shell) .room-chat-heading h2 { color: var(--gold); font-family: inherit; font-size: 12px; font-weight: 400; }
+:is(.app-shell, .game-shell) .room-chat-heading span { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .room-chat-list { --rim: var(--shade); --shade: #332b44; padding: 10px; background: var(--bg); }
+:is(.app-shell, .game-shell) .room-chat-message { --rim: #4a3f63; padding: 4px 8px; background: var(--panel-2); }
+:is(.app-shell, .game-shell) .room-chat-message.mine { --rim: var(--gold-2); --shade: #2a1c06; background: #3a2c10; }
+:is(.app-shell, .game-shell) .room-chat-meta strong { color: var(--gold); font-size: 12px; font-weight: 400; }
+:is(.app-shell, .game-shell) .room-chat-meta time { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .room-chat-message p { color: var(--text); font-size: 12px; }
+:is(.app-shell, .game-shell) .room-chat-empty { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .room-chat-input { --rim: var(--shade); --shade: #332b44; height: 32px; color: var(--text); background: var(--bg); font-size: 12px; }
+:is(.app-shell, .game-shell) .room-chat-input::placeholder { color: #5f5876; }
+:is(.app-shell, .game-shell) .room-chat-input:focus { outline: var(--px) solid var(--gold); outline-offset: 0; }
+:is(.app-shell, .game-shell) .room-chat-send { padding: 0 14px; }
+:is(.app-shell, .game-shell) .room-chat-error { color: var(--bad); font-size: 12px; }
+:is(.app-shell, .game-shell) .voice-bar { --rim: var(--shade); --shade: #332b44; padding: 8px; background: var(--bg); }
+:is(.app-shell, .game-shell) .voice-button { padding: 2px 8px; }
+:is(.app-shell, .game-shell) .voice-button.live { --rim: #62c97a; --shade: #0b2614; color: #b7f0c0; background: #12452a; }
+:is(.app-shell, .game-shell) .voice-button.leave { color: #ffd8d0; }
+:is(.app-shell, .game-shell) :is(.voice-count, .voice-person small) { color: var(--muted); font-size: 12px; }
+:is(.app-shell, .game-shell) .voice-person { --rim: #4a3f63; padding: 0 6px; color: var(--text); background: var(--panel-2); font-size: 12px; }
+:is(.app-shell, .game-shell) .voice-person.speaking { --rim: var(--ok); }
+:is(.app-shell, .game-shell) .voice-error { color: var(--bad); font-size: 12px; }
+
+/* ---------- 牌桌 ---------- */
+.game-shell {
+  /* 像素牌面 41×57：大屏 2 倍，其余 1.5 倍；打出去的小牌 1 倍 */
+  --card-w: 61.5px;
+  --small-card-w: 41px;
+  background: repeating-conic-gradient(#13101a 0 25%, var(--bg) 0 50%) 0 0 / 4px 4px;
+}
+@media (min-width: 1500px) and (min-height: 860px) {
+  .game-shell { --card-w: 82px; --small-card-w: 61.5px; }
+}
+.game-shell .game-topbar { gap: 10px; border-bottom: var(--px) solid #332b44; }
+.game-shell .room-code-chip { --rim: #332b44; padding: 2px 8px; color: var(--muted); background: var(--bg); font-size: 12px; font-weight: 400; letter-spacing: 0.15em; }
+.game-shell .level-chip { --rim: #3f8a62; --shade: #0e2a1c; padding: 2px 10px; color: var(--text); background: var(--felt); font-size: 12px; }
+.game-shell .level-chip b { color: var(--gold); font-size: 24px; font-weight: 400; line-height: 1; vertical-align: -4px; }
+.game-shell .team-levels { color: var(--muted); font-size: 12px; }
+.game-shell .turn-indicator { --rim: #332b44; gap: 8px; padding: 2px 10px; color: var(--muted); background: var(--bg); font-size: 12px; }
+.game-shell .turn-dot { width: 6px; height: 6px; border-radius: 0; background: var(--muted); box-shadow: none; }
+.game-shell .turn-indicator.my-turn { --rim: var(--gold-2); color: var(--gold); background: #2a1c06; font-weight: 400; }
+.game-shell .turn-indicator.my-turn .turn-dot { background: var(--gold); box-shadow: none; animation: gd-blink 1s steps(2, jump-none) infinite; }
+@keyframes gd-blink { 50% { opacity: 0; } }
+.game-shell .topbar-feedback { color: var(--ok); font-size: 12px; }
+.game-shell .game-topbar .game-rules-panel { background: var(--panel); }
+
+/* 毡面：深绿像素格纹 + 三层木框 */
+.game-shell .felt {
+  border: 0;
+  border-radius: 0;
+  margin: calc(var(--px) * 4);
+  background: repeating-conic-gradient(var(--felt) 0 25%, var(--felt-2) 0 50%) 0 0 / 4px 4px;
+  box-shadow:
+    0 0 0 calc(var(--px) * 2) var(--wood-hi),
+    0 0 0 calc(var(--px) * 4) var(--wood),
+    0 0 0 calc(var(--px) * 5) var(--edge),
+    inset 0 0 0 var(--px) #0e2a1c,
+    inset 0 calc(var(--px) * 3) 0 0 rgba(0, 0, 0, 0.25);
+}
+/* 毡面上一道浅色压线，和德州的像素牌桌一样 */
+.game-shell .felt::before {
+  position: absolute;
+  inset: calc(var(--px) * 10);
+  box-shadow: inset 0 0 0 var(--px) #3a805c;
+  pointer-events: none;
+  content: "";
+}
+.game-shell .tribute-note { --rim: #3f8a62; --shade: #0e2a1c; padding: 10px 14px; color: #f4e6c2; background: rgba(8, 30, 20, 0.85); font-size: 12px; }
+.game-shell .seat-plate { --rim: #3f8a62; --shade: #06180f; gap: 6px; padding: 4px 8px; color: var(--text); background: #0e2a1c; font-size: 12px; }
+.game-shell .seat-plate strong { font-weight: 400; }
+.game-shell .seat-active { --rim: var(--gold); --shade: #7a5410; background: #2a1c06; animation: gd-glow 1.2s steps(2, jump-none) infinite; }
+@keyframes gd-glow { 50% { filter: brightness(1.25); } }
+.game-shell .seat-offline { opacity: 0.55; }
+.game-shell .seat-tag { --rim: #fff2b8; --shade: #7a5410; padding: 0 4px; color: #2a1c06; background: var(--gold); font-size: 12px; font-weight: 400; }
+.game-shell .seat-tag.offline { --rim: #f25c5c; --shade: #3d0a12; color: #ffd8d0; background: #6e1020; }
+.game-shell .seat-count { --rim: #fff; --shade: #9a93ad; min-width: 24px; padding: 0 4px; color: #141218; background: #f1ece0; font-size: 12px; font-weight: 400; }
+.game-shell .seat-count.warn { --rim: #ff9a8c; --shade: #6e1020; color: #fff; background: #c0303c; }
+.game-shell .seat-place { --rim: #fff2b8; --shade: #7a5410; padding: 0 4px; color: #2a1c06; background: var(--gold); font-size: 12px; font-weight: 400; }
+.game-shell .seat-bottom { --rim: #6b5c8f; --shade: #141119; color: var(--text); background: #332b44; }
+.game-shell .seat-bottom .seat-count { color: #141218; background: #f1ece0; }
+.game-shell .played-label { color: #cfe8d4; font-size: 12px; text-shadow: calc(1em / 12) calc(1em / 12) 0 var(--edge); }
+.game-shell .pass-tag { --rim: #3f8a62; --shade: #06180f; padding: 2px 12px; color: #cfe8d4; background: #0e2a1c; font-size: 12px; letter-spacing: 0.3em; }
+
+/* 自己的区域 */
+.game-shell .my-area { --rim: #4a3f63; padding: 10px 14px 14px; background: var(--panel); }
+.game-shell .my-area-active { --rim: var(--gold); --shade: #7a5410; background: #241d16; }
+.game-shell .selection-hint { color: var(--muted); font-size: 12px; }
+.game-shell .my-actions .primary-button, .game-shell .my-actions .quiet-button { min-height: 32px; }
+.game-shell .result-actions .primary-button, .game-shell .result-actions .quiet-button { min-height: 36px; }
+.game-shell .dissolve-button { padding: 4px 10px; }
+
+/* ---------- 像素牌：牌面图片已带描边和角标，这里只管尺寸、阴影和状态 ---------- */
+.game-shell .card {
+  height: calc(var(--card-w) * 57 / 41);
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 var(--px) 0 rgba(0, 0, 0, 0.45));
+  transition: transform 90ms steps(2, jump-none);
+}
+.game-shell .card img { image-rendering: pixelated; }
+.game-shell .card::after { border-radius: 0; }
+.game-shell button.card:hover { transform: translateY(calc(var(--px) * -2)); }
+.game-shell .card-small { --card-w: var(--small-card-w); }
+.game-shell .played-cards .card + .card { margin-left: calc(var(--card-w) * -0.5); }
+/* 级牌：金色细边；逢人配：金色粗边 + 「配」角标 */
+.game-shell .card-level::after { inset: 1px; box-shadow: inset 0 0 0 var(--px) var(--gold); }
+.game-shell .card-wild::after { inset: 1px; background: rgba(240, 192, 80, 0.12); box-shadow: inset 0 0 0 calc(var(--px) * 2) var(--gold); }
+.game-shell .card-wild-badge { --rim: #fff2b8; --shade: #7a5410; top: auto; right: 8%; bottom: 8%; padding: 0 2px; color: #2a1c06; background: var(--gold); font-size: 12px; font-weight: 400; line-height: 1.2; }
+/* 选中：上抬一截，外面一圈金色像素框 */
+.game-shell .card-selected {
+  transform: translateY(-16px);
+  filter: drop-shadow(var(--px) 0 0 var(--gold)) drop-shadow(calc(var(--px) * -1) 0 0 var(--gold)) drop-shadow(0 var(--px) 0 var(--gold)) drop-shadow(0 calc(var(--px) * -1) 0 var(--gold));
+}
+.game-shell button.card-selected:hover { transform: translateY(-18px); }
+.game-shell .card-dimmed { filter: grayscale(0.85) brightness(0.6); }
+
+/* ---------- 一局结束、确认弹窗 ---------- */
+:is(.app-shell, .game-shell) .modal-backdrop,
+:is(.app-shell, .game-shell) .gm-modal-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  backdrop-filter: none;
+  background: repeating-conic-gradient(rgba(5, 4, 8, 0.85) 0 25%, rgba(5, 4, 8, 0.6) 0 50%) 0 0 / 4px 4px;
+}
+.game-shell .result-panel { --rim: var(--gold); padding: 22px 24px; background: var(--panel); }
+.game-shell .result-panel h2 { color: var(--gold); font-family: inherit; font-size: 24px; font-weight: 400; text-shadow: var(--px) var(--px) 0 var(--edge); }
+.game-shell .result-order li { border-bottom: var(--px) solid var(--panel-2); color: var(--text); font-size: 12px; }
+.game-shell .result-place { color: var(--gold); font-size: 12px; font-weight: 400; }
+.game-shell .result-levels { color: var(--muted); font-size: 12px; }
+.game-shell .ready-chip { --rim: #4a3f63; padding: 2px 8px; color: var(--muted); background: var(--panel-2); font-size: 12px; }
+.game-shell .ready-chip.ready { --rim: var(--ok); --shade: #0b2614; color: #b7f0c0; background: #12452a; }
+:is(.app-shell, .game-shell) .gm-panel { --rim: var(--gold); width: min(380px, 100%); padding: 22px 24px; color: var(--text); background: var(--panel); }
+:is(.app-shell, .game-shell) .gm-panel h2 { margin: 0 0 10px; color: var(--gold); font-family: inherit; font-size: 24px; font-weight: 400; line-height: 1.25; }
+:is(.app-shell, .game-shell) .gm-panel p { margin: 0; color: var(--text); font-size: 12px; line-height: 1.7; }
+:is(.app-shell, .game-shell) .gm-panel-actions { display: flex; justify-content: flex-end; gap: 14px; margin-top: 20px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .game-shell :is(.turn-indicator.my-turn .turn-dot, .seat-active) { animation: none; }
+  .game-shell .card { transition: none; }
+}
+
+/* 原样式在窄屏下会改字号和牌宽；像素字体要保持 12 的整数倍，牌宽用 1 倍 */
+@media (max-width: 1000px), (max-height: 620px) {
+  .game-shell { --card-w: 41px; --small-card-w: 41px; }
+}
+@media (max-width: 720px) {
+  .app-shell .welcome h1 { font-size: 72px; }
+}
+@media (max-width: 520px) {
+  .app-shell .welcome h1 { font-size: 48px; }
+  .app-shell .waiting-head h1 { font-size: 24px; }
+  .app-shell .topbar-right { gap: 8px; }
+}

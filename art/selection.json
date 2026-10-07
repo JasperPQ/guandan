@@ -1,0 +1,16 @@
+{
+  "_说明": "像素扑克牌人像的选择（out/faces/ 下的文件名），cards.py 按这里合成牌面。2026-10-07 我挑的，他可以在画廊里改。",
+  "SK": "SK-c1",
+  "SQ": "SQ-c1",
+  "SJ": "SJ-c2",
+  "HK": "HK-c1",
+  "HQ": "HQ-c1",
+  "HJ": "HJ-c2",
+  "DK": "DK-c1",
+  "DQ": "DQ-c1",
+  "DJ": "DJ-c2",
+  "CK": "CK-c1",
+  "CQ": "CQ-c1",
+  "CJ": "CJ-c2",
+  "joker": "joker-c1"
+}
