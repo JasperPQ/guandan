@@ -17,7 +17,6 @@ import {
 } from "@guandan/game";
 import CardView, { cardName, preloadCardImages } from "./CardView.js";
 import GameRules from "./GameRules.js";
-import { usePixel } from "./pixel.js";
 
 const PLACE_NAMES = ["头游", "二游", "三游", "末游"];
 type Position = "bottom" | "right" | "top" | "left";
@@ -119,7 +118,7 @@ function Table({
   notice,
   brand,
   connection,
-  styleToggle,
+  themeToggle,
   chat,
   onAction,
   onRematch,
@@ -131,15 +130,14 @@ function Table({
   notice: string;
   brand: ReactNode;
   connection: ReactNode;
-  /** 顶栏的画面切换按钮（像素版 ⇄ 原始版本）。 */
-  styleToggle: ReactNode;
+  /** 顶栏的白天 / 夜间切换按钮。 */
+  themeToggle: ReactNode;
   chat: ReactNode;
   onAction: (action: MatchAction) => void;
   onRematch: (accept: boolean) => void;
   onDissolve: () => void;
 }) {
-  const pixel = usePixel();
-  useEffect(() => preloadCardImages(pixel), [pixel]);
+  useEffect(() => preloadCardImages(), []);
   const match = room.match!;
   const hand = match.hand;
   const mySeat = match.mySeat ?? 0;
@@ -238,7 +236,7 @@ function Table({
         <span className="topbar-feedback" role="status">{error ? <span className="error-text">{error}</span> : notice}</span>
         <GameRules />
         {isHost && <button type="button" className="dissolve-button" onClick={onDissolve}>解散房间</button>}
-        {styleToggle}
+        {themeToggle}
         {connection}
       </header>
 

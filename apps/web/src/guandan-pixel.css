@@ -1,6 +1,6 @@
 /*
- * 掼蛋的像素风皮肤：首页、等待大厅、牌桌。只在像素版时放进页面，叠在原始的 styles.css 上面；
- * 切回原始版本时整份移除，styles.css 本身不改。配色、边框、字体和宝石商人 / 游戏中心的像素版一致。
+ * 掼蛋的像素风皮肤：首页、等待大厅、牌桌，叠在 styles.css 上面（styles.css 是改版前的样式，只当底子用，本身不改）。
+ * 这里写的是夜间配色；白天版由 day-theme.ts 按 day-palette.ts 换色生成。配色、边框、字体和宝石商人 / 游戏中心一致。
  * 原样式的选择器多是单个类，这里统一加 .app-shell / .game-shell 前缀压过它们。
  * 字号只用 12 的整数倍才清晰；边框用多层硬 box-shadow（四边黑边、角上留空），粗细用 --px。
  */
@@ -112,7 +112,7 @@ body { background: repeating-conic-gradient(#13101a 0 25%, #0e0c13 0 50%) 0 0 / 
   opacity: 1;
   filter: grayscale(0.6) brightness(0.7);
 }
-:is(.app-shell, .game-shell) .style-toggle { padding: 6px 10px; }
+:is(.app-shell, .game-shell) .theme-toggle { min-height: 0; padding: 6px 10px; white-space: nowrap; }
 
 /* ---------- 顶栏 ---------- */
 .app-shell .topbar { border-bottom: var(--px) solid #332b44; }
