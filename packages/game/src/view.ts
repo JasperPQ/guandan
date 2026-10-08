@@ -3,6 +3,8 @@ import type { HandState, MatchState, Seat, TributeState } from "./match.js";
 
 export interface HandView extends Omit<HandState, "hands" | "tribute"> {
 	myCards: Card[];
+	/** 只发给打开了「观战看手牌」的观战者：四个座位各自的手牌。 */
+	allCards?: Card[][];
 	cardCounts: number[];
 	tribute: TributeView | null;
 }

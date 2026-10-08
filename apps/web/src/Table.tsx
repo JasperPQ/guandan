@@ -17,6 +17,8 @@ import {
 } from "@guandan/game";
 import CardView, { cardName, preloadCardImages } from "./CardView.js";
 import GameRules from "./GameRules.js";
+import { GameRoomMenu, SpectateBar } from "./RoomExtras.js";
+import { socket } from "./socket.js";
 
 const PLACE_NAMES = ["头游", "二游", "三游", "末游"];
 type Position = "bottom" | "right" | "top" | "left";
@@ -87,16 +89,18 @@ function ActionDisplay({ action, level }: { action: SeatAction | null; level: nu
   );
 }
 
-function SeatPlate({ seat, match, member, position }: {
+function SeatPlate({ seat, match, member, position, viewSeat }: {
   seat: Seat;
   match: MatchView;
   member: LobbyMember | undefined;
   position: Position;
+  /** 从哪个座位看（观战时是被看的那位）；他的对家标「队友」。 */
+  viewSeat: Seat | null;
 }) {
   const player = match.players[seat]!;
   const place = match.hand.finishOrder.indexOf(seat);
   const active = match.phase === "playing" && match.hand.turn === seat;
-  const partner = match.mySeat !== null && (seat + 2) % 4 === match.mySeat;
+  const partner = viewSeat !== null && (seat + 2) % 4 === viewSeat;
   const count = match.hand.cardCounts[seat] ?? 0;
   return (
     <div className={`seat-plate seat-${position}${active ? " seat-active" : ""}${member?.connected === false ? " seat-offline" : ""}`}>
@@ -123,6 +127,9 @@ function Table({
   onAction,
   onRematch,
   onDissolve,
+  watchId,
+  onWatch,
+  onLeave,
 }: {
   room: LobbyRoomSnapshot;
   busy: boolean;
@@ -136,15 +143,24 @@ function Table({
   onAction: (action: MatchAction) => void;
   onRematch: (accept: boolean) => void;
   onDissolve: () => void;
+  /** 观战时从这位玩家的座位看。 */
+  watchId: string;
+  onWatch: (playerId: string) => void;
+  /** 观战的人离开。 */
+  onLeave: () => void;
 }) {
   useEffect(() => preloadCardImages(), []);
   const match = room.match!;
   const hand = match.hand;
-  const mySeat = match.mySeat ?? 0;
+  // 观战的人没有座位：牌桌按 watchId 那位玩家的座位摆（下方是他），但什么都不能点。
+  const spectating = !room.members.some((member) => member.id === socket.id);
+  const mySeat = spectating ? Math.max(0, match.players.findIndex((player) => player.id === watchId)) as Seat : match.mySeat ?? 0;
+  // 观战开了「看手牌」时服务器附上四家的手牌；没开就只有张数。
+  const myCards = spectating ? hand.allCards?.[mySeat] ?? [] : hand.myCards;
   const myTeam = mySeat % 2;
   const level = hand.level;
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const isHost = room.members.find((member) => member.id === match.players[mySeat]?.id)?.isHost ?? false;
+  const isHost = !spectating && (room.members.find((member) => member.id === match.players[mySeat]?.id)?.isHost ?? false);
   const rematch = room.rematch;
   const [rematchDeadline, setRematchDeadline] = useState(0);
   const [now, setNow] = useState(() => Date.now());
@@ -164,24 +180,25 @@ function Table({
 
   // 换回合、换阶段或手牌变化时，丢掉已不在手里的选择。
   useEffect(() => {
-    setSelected((current) => new Set([...current].filter((cardId) => hand.myCards.some((card) => card.id === cardId))));
-  }, [hand.myCards]);
+    setSelected((current) => new Set([...current].filter((cardId) => myCards.some((card) => card.id === cardId))));
+  }, [myCards]);
   useEffect(() => setSelected(new Set()), [match.phase, hand.number]);
 
-  const selectedCards = useMemo(() => hand.myCards.filter((card) => selected.has(card.id)), [hand.myCards, selected]);
+  const selectedCards = useMemo(() => myCards.filter((card) => selected.has(card.id)), [myCards, selected]);
   const readings = useMemo(() => detectCombos(selectedCards, level), [selectedCards, level]);
   const legal = readings.filter((combo) => beats(combo, hand.lastPlay?.combo ?? null));
 
-  const myTurn = match.phase === "playing" && hand.turn === mySeat;
+  const myTurn = !spectating && match.phase === "playing" && hand.turn === mySeat;
   const tribute = hand.tribute;
-  const mustTribute = match.phase === "tribute" && tribute?.givers.includes(mySeat) && !tribute.givenSeats.includes(mySeat);
+  const mustTribute = !spectating && match.phase === "tribute" && tribute?.givers.includes(mySeat) && !tribute.givenSeats.includes(mySeat);
   const myTransfer = tribute?.transfers.find((transfer) => transfer.to === mySeat);
-  const mustReturn = match.phase === "return" && myTransfer && !tribute?.returns.some((transfer) => transfer.from === mySeat);
+  const mustReturn = !spectating && match.phase === "return" && myTransfer && !tribute?.returns.some((transfer) => transfer.from === mySeat);
   const eligible = mustTribute
-    ? new Set(tributeCandidates(hand.myCards, level).map((card) => card.id))
-    : mustReturn ? new Set(returnCandidates(hand.myCards).map((card) => card.id)) : null;
+    ? new Set(tributeCandidates(myCards, level).map((card) => card.id))
+    : mustReturn ? new Set(returnCandidates(myCards).map((card) => card.id)) : null;
 
   function toggle(cardId: string) {
+    if (spectating) return;
     if (eligible) {
       if (!eligible.has(cardId)) return;
       setSelected((current) => (current.has(cardId) ? new Set() : new Set([cardId])));
@@ -200,6 +217,8 @@ function Table({
   }
 
   const name = (seat: Seat) => match.players[seat]?.name ?? "";
+  // 观战时没有「我方」，按队名说。
+  const teamName = (team: number) => (spectating ? (team === 0 ? "A 队" : "B 队") : team === myTeam ? "我方" : "对方");
   const turnText = match.phase === "finished" ? "整场结束"
     : match.phase === "handOver" ? "本局结束"
     : match.phase === "tribute" ? "进贡中"
@@ -224,17 +243,18 @@ function Table({
     <div className="game-screen">
       <header className="game-topbar">
         {brand}
-        <span className="room-code-chip" title="房间码">{room.code}</span>
+        {room.code && <span className="room-code-chip" title="房间码">{room.code}</span>}
         <span className="level-chip" title="本局打的级数">本局打 <b>{levelText(level)}</b></span>
         <span className="team-levels">
-          <span><span className={`team-dot team-${myTeam}`} />我方 {levelText(match.teamLevels[myTeam]!)}</span>
-          <span><span className={`team-dot team-${1 - myTeam}`} />对方 {levelText(match.teamLevels[1 - myTeam]!)}</span>
+          <span><span className={`team-dot team-${myTeam}`} />{teamName(myTeam)} {levelText(match.teamLevels[myTeam]!)}</span>
+          <span><span className={`team-dot team-${1 - myTeam}`} />{teamName(1 - myTeam)} {levelText(match.teamLevels[1 - myTeam]!)}</span>
         </span>
         <span className={myTurn || mustTribute || mustReturn ? "turn-indicator my-turn" : "turn-indicator"}>
           <span className="turn-dot" />{turnText}
         </span>
         <span className="topbar-feedback" role="status">{error ? <span className="error-text">{error}</span> : notice}</span>
         <GameRules />
+        <GameRoomMenu room={room} />
         {isHost && <button type="button" className="dissolve-button" onClick={onDissolve}>解散房间</button>}
         {themeToggle}
         {connection}
@@ -245,7 +265,7 @@ function Table({
           const seat = seatAt(mySeat, position);
           return (
             <div className={`felt-seat felt-${position}`} key={position}>
-              <SeatPlate seat={seat} match={match} member={room.members.find((member) => member.id === match.players[seat]?.id)} position={position} />
+              <SeatPlate seat={seat} match={match} member={room.members.find((member) => member.id === match.players[seat]?.id)} position={position} viewSeat={mySeat} />
               <div className="felt-action"><ActionDisplay action={hand.actions[seat] ?? null} level={level} /></div>
             </div>
           );
@@ -256,9 +276,13 @@ function Table({
         {tributeSummary && !handStarted && <p className="tribute-note">{tributeSummary}</p>}
       </section>
 
-      <section className={`my-area${myTurn || mustTribute || mustReturn ? " my-area-active" : ""}`} aria-label="你的手牌">
+      <section className={`my-area${myTurn || mustTribute || mustReturn ? " my-area-active" : ""}`} aria-label={spectating ? `${name(mySeat)}的手牌` : "你的手牌"}>
         <div className="my-bar">
-          <SeatPlate seat={mySeat} match={match} member={room.members.find((member) => member.id === match.players[mySeat]?.id)} position="bottom" />
+          <SeatPlate seat={mySeat} match={match} member={room.members.find((member) => member.id === match.players[mySeat]?.id)} position="bottom" viewSeat={mySeat} />
+          {spectating ? (
+            <SpectateBar room={room} watchId={match.players[mySeat]?.id ?? ""} onWatch={onWatch} onLeave={onLeave} />
+          ) : (
+          <>
           <span className="selection-hint">{eligible ? (mustTribute ? "请选择一张最大的牌进贡" : "请选择一张 10 以下的牌还贡") : selectionHint}</span>
           <div className="my-actions">
             {mustTribute && (
@@ -281,8 +305,12 @@ function Table({
               </>
             )}
           </div>
+          </>
+          )}
         </div>
-        <HandRow cards={hand.myCards} level={level} selected={selected} eligible={eligible} onToggle={toggle} />
+        {spectating && myCards.length === 0 && (hand.cardCounts[mySeat] ?? 0) > 0
+          ? <p className="selection-hint">观战看不到手牌（{name(mySeat)}还有 {hand.cardCounts[mySeat]} 张）。</p>
+          : <HandRow cards={myCards} level={level} selected={selected} eligible={eligible} onToggle={toggle} />}
       </section>
 
       <div className="chat-area">{chat}</div>
@@ -292,33 +320,35 @@ function Table({
           <section className="result-panel" role="dialog" aria-modal="true" aria-labelledby="result-title">
             <h2 id="result-title">
               {match.phase === "finished"
-                ? (match.winnerTeam === myTeam ? "我们赢了整场！" : "对方赢下了整场")
-                : (match.lastResult?.winnerTeam === myTeam ? `我方升 ${match.lastResult?.upgrade} 级` : `对方升 ${match.lastResult?.upgrade} 级`)}
+                ? (spectating ? `${teamName(match.winnerTeam ?? 0)}赢下了整场` : match.winnerTeam === myTeam ? "我们赢了整场！" : "对方赢下了整场")
+                : `${teamName(match.lastResult?.winnerTeam ?? 0)}升 ${match.lastResult?.upgrade} 级`}
             </h2>
             <ol className="result-order">
               {(match.lastResult?.finishOrder ?? []).map((seat, index) => (
                 <li key={seat}>
                   <span className="result-place">{PLACE_NAMES[index]}</span>
                   <span className={`team-dot team-${seat % 2}`} />
-                  {name(seat)}{seat === mySeat ? "（你）" : ""}
+                  {name(seat)}{!spectating && seat === mySeat ? "（你）" : ""}
                 </li>
               ))}
             </ol>
             {match.phase === "handOver" && match.lastResult && (
               <>
                 <p className="result-levels">
-                  我方打 {levelText(match.teamLevels[myTeam]!)} · 对方打 {levelText(match.teamLevels[1 - myTeam]!)}
-                  {match.lastResult.aReset !== null && <><br />{match.lastResult.aReset === myTeam ? "我方" : "对方"}打 A 三次未过，退回 2。</>}
-                  {match.lastResult.aFailed !== null && match.lastResult.aReset === null && <><br />{match.lastResult.aFailed === myTeam ? "我方" : "对方"}本局未能过 A。</>}
+                  {teamName(myTeam)}打 {levelText(match.teamLevels[myTeam]!)} · {teamName(1 - myTeam)}打 {levelText(match.teamLevels[1 - myTeam]!)}
+                  {match.lastResult.aReset !== null && <><br />{teamName(match.lastResult.aReset)}打 A 三次未过，退回 2。</>}
+                  {match.lastResult.aFailed !== null && match.lastResult.aReset === null && <><br />{teamName(match.lastResult.aFailed)}本局未能过 A。</>}
                 </p>
                 <div className="ready-row">
                   {match.players.map((player, seat) => (
                     <span className={match.ready[seat] ? "ready-chip ready" : "ready-chip"} key={player.id}>{player.name}{match.ready[seat] ? " ✓" : ""}</span>
                   ))}
                 </div>
-                <button type="button" className="primary-button" disabled={busy || match.ready[mySeat]} onClick={() => onAction({ type: "ready" })}>
-                  {match.ready[mySeat] ? "等待其他玩家准备" : "准备下一局"}
-                </button>
+                {!spectating && (
+                  <button type="button" className="primary-button" disabled={busy || match.ready[mySeat]} onClick={() => onAction({ type: "ready" })}>
+                    {match.ready[mySeat] ? "等待其他玩家准备" : "准备下一局"}
+                  </button>
+                )}
               </>
             )}
             {match.phase === "finished" && rematch && (
@@ -331,12 +361,16 @@ function Table({
                     </span>
                   ))}
                 </div>
-                <div className="result-actions">
+                {spectating ? (
+                  <div className="result-actions">
+                    <button type="button" className="quiet-button" onClick={onLeave}>离开观战</button>
+                  </div>
+                ) : <div className="result-actions">
                   <button type="button" className="quiet-button" onClick={() => onRematch(false)}>退出房间</button>
                   <button type="button" className="primary-button" disabled={accepted.has(myId)} onClick={() => onRematch(true)}>
                     {accepted.has(myId) ? "等待其他玩家" : "再来一场"}
                   </button>
-                </div>
+                </div>}
               </>
             )}
           </section>

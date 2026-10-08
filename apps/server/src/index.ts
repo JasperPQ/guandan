@@ -7,16 +7,20 @@ import {
   RuleViolation,
   applyAction,
   createMatch,
+  DEFAULT_ROOM_ACCESS,
   viewForPlayer,
   type ClientToServerEvents,
   type IceServerConfig,
   type LobbyMember,
   type LobbyRoomSnapshot,
   type MatchState,
+  type MatchView,
   type PublicRoomSummary,
+  type RoomAccess,
   type RoomChatMessage,
   type Seat,
   type ServerToClientEvents,
+  type Spectator,
   type VoiceSignal,
 } from "@guandan/game";
 
@@ -27,6 +31,11 @@ interface RoomState {
   status: "waiting" | "playing";
   ownerId: string;
   members: LobbyMember[];
+  /** 观战的人：不占座位，离开或断线就移出。 */
+  spectators: Spectator[];
+  /** 拿房间码进来（或者本来坐着改成观战）的观战者：看得到房间码，也能坐下。从列表进来的只有公开房间才能坐下。 */
+  invited: Set<string>;
+  access: RoomAccess;
   chat: RoomChatMessage[];
   match?: MatchState;
   /** 对局中所有玩家都离线时启动的关闭计时器。 */
@@ -46,6 +55,7 @@ const ROOM_ABANDON_MS = Number(process.env.ROOM_ABANDON_MS ?? 2 * 60_000);
 const REMATCH_TIMEOUT_MS = Number(process.env.REMATCH_TIMEOUT_MS ?? 60_000);
 const ADMIN_RETRY_DELAY_MS = 2_000;
 const VOICE_SIGNAL_MAX_LENGTH = 20_000;
+const MAX_SPECTATORS = 20;
 const TURN_CREDENTIAL_TTL_SECONDS = 24 * 60 * 60;
 const rooms = new Map<string, RoomState>();
 const socketRooms = new Map<string, string>();
@@ -118,6 +128,11 @@ function isSeat(value: unknown): value is Seat {
   return value === 0 || value === 1 || value === 2 || value === 3;
 }
 
+function freeSeat(room: RoomState): Seat | null {
+  const taken = new Set(room.members.map((member) => member.seat));
+  return ([0, 1, 2, 3] as Seat[]).find((seat) => !taken.has(seat)) ?? null;
+}
+
 function generateRoomCode(): string {
   let code = "";
   do {
@@ -127,15 +142,34 @@ function generateRoomCode(): string {
 }
 
 function snapshot(room: RoomState, viewerId: string): LobbyRoomSnapshot {
+  const seated = room.members.some((member) => member.id === viewerId);
   return {
-    code: room.code,
+    code: seated || room.invited.has(viewerId) ? room.code : "",
+    spectators: room.spectators.map((spectator) => ({ ...spectator })),
+    access: { ...room.access },
     status: room.status,
     members: room.members.map((member) => ({ ...member })),
     chat: room.chat.map((entry) => ({ ...entry })),
     voice: [...room.voice].map(([id, state]) => ({ id, muted: state.muted })),
     ...(room.rematch ? { rematch: { remainingMs: Math.max(0, room.rematch.deadline - Date.now()), acceptedIds: [...room.rematch.accepted] } } : {}),
-    ...(room.match ? { match: viewForPlayer(room.match, viewerId) } : {}),
+    ...(room.match ? { match: seated ? viewForPlayer(room.match, viewerId) : spectatorView(room) } : {}),
   };
+}
+
+/** 观战的人看到的对局：默认只有公开信息（各家只看张数）；房主打开「看手牌」后附上四家的手牌，观战者换座位看。 */
+function spectatorView(room: RoomState): MatchView {
+  const match = room.match!;
+  const view = viewForPlayer(match, "");
+  if (!room.access.spectatorsSeeAll) return view;
+  return { ...view, hand: { ...view.hand, allCards: structuredClone(match.hand.hands) } };
+}
+
+function isSpectator(room: RoomState, socketId: string): boolean {
+  return room.spectators.some((spectator) => spectator.id === socketId);
+}
+
+function nameTaken(room: RoomState, name: string): boolean {
+  return room.members.some((member) => member.name === name) || room.spectators.some((spectator) => spectator.name === name);
 }
 
 function roomSummaries(): PublicRoomSummary[] {
@@ -147,6 +181,9 @@ function roomSummaries(): PublicRoomSummary[] {
       return {
         id: room.publicId,
         status,
+        open: room.access.open,
+        allowSpectators: room.access.allowSpectators,
+        spectators: room.spectators.length,
         players: room.members.map((member) => ({ name: member.name, connected: member.connected, seat: member.seat })),
         ...(match ? { teamLevels: [...match.teamLevels] as [number, number], handNumber: match.hand.number } : {}),
       };
@@ -192,6 +229,7 @@ function emitRoomUpdate(room: RoomState): void {
   for (const member of room.members) {
     io.to(member.id).emit("room:updated", snapshot(room, member.id));
   }
+  for (const spectator of room.spectators) io.to(spectator.id).emit("room:updated", snapshot(room, spectator.id));
   emitLobbyUpdate();
 }
 
@@ -205,8 +243,7 @@ function scheduleAbandonedRoomClose(room: RoomState): void {
   clearTimeout(room.abandonTimer);
   room.abandonTimer = setTimeout(() => {
     if (rooms.get(room.code) !== room || room.members.some((member) => member.connected)) return;
-    rooms.delete(room.code);
-    emitLobbyUpdate();
+    deleteRoom(room, "玩家都离线了，房间已关闭。");
   }, ROOM_ABANDON_MS);
   room.abandonTimer.unref();
 }
@@ -218,6 +255,12 @@ function removeMember(socketId: string): void {
   rooms.get(code)?.voice.delete(socketId);
   const room = rooms.get(code);
   if (!room) return;
+  if (isSpectator(room, socketId)) {
+    room.spectators = room.spectators.filter((spectator) => spectator.id !== socketId);
+    room.invited.delete(socketId);
+    emitRoomUpdate(room);
+    return;
+  }
 
   if (room.status === "playing") {
     room.members = room.members.map((member) =>
@@ -230,8 +273,7 @@ function removeMember(socketId: string): void {
 
   room.members = room.members.filter((member) => member.id !== socketId);
   if (room.members.length === 0) {
-    rooms.delete(code);
-    emitLobbyUpdate();
+    deleteRoom(room, "玩家都离开了，房间已关闭。");
     return;
   }
   if (room.ownerId === socketId) {
@@ -250,7 +292,10 @@ function closeMemberConnection(room: RoomState, memberId: string, reason: string
   memberSocket.emit("room:closed", { reason });
 }
 
-function deleteRoom(room: RoomState): void {
+/** 删除房间；还在看的观战者会收到 reason。 */
+function deleteRoom(room: RoomState, reason = "房间已关闭。"): void {
+  for (const spectator of room.spectators) closeMemberConnection(room, spectator.id, reason);
+  room.spectators = [];
   clearTimeout(room.abandonTimer);
   clearTimeout(room.rematch?.timer);
   for (const member of room.members) socketRooms.delete(member.id);
@@ -260,7 +305,7 @@ function deleteRoom(room: RoomState): void {
 
 function dissolveRoom(room: RoomState, reason: string): void {
   for (const member of room.members) closeMemberConnection(room, member.id, reason);
-  deleteRoom(room);
+  deleteRoom(room, reason);
 }
 
 /** 移出成员并在需要时转移房主；房间空了就删除。返回房间是否还在。 */
@@ -386,6 +431,9 @@ io.on("connection", (socket) => {
       status: "waiting",
       ownerId: socket.id,
       members: [{ id: socket.id, name, isHost: true, connected: true, seat: 0 }],
+      spectators: [],
+      invited: new Set(),
+      access: { ...DEFAULT_ROOM_ACCESS },
       chat: [],
       voice: new Map(),
     };
@@ -406,13 +454,44 @@ io.on("connection", (socket) => {
       ack({ ok: false, error: "昵称长度需为 2–18 个字符。" });
       return;
     }
-    const code = normalizeCode(payload?.code);
-    const room = code ? rooms.get(code) : undefined;
-    if (!code || !room) {
-      ack({ ok: false, error: "找不到这个房间，请检查房间码。" });
+    // 从首页列表点进来的带 roomId（公开 id），用房间码进来的带 code。
+    const viaList = typeof payload.roomId === "string";
+    const code = viaList ? null : normalizeCode(payload?.code);
+    const room = viaList
+      ? [...rooms.values()].find((candidate) => candidate.publicId === payload.roomId)
+      : code ? rooms.get(code) : undefined;
+    if (!room) {
+      ack({ ok: false, error: viaList ? "这个房间已经不在了。" : "找不到这个房间，请检查房间码。" });
       return;
     }
+
+    if (payload.spectate === true) {
+      if (!room.access.allowSpectators) {
+        ack({ ok: false, error: "这个房间没有开放观战。" });
+        return;
+      }
+      if (room.spectators.length >= MAX_SPECTATORS) {
+        ack({ ok: false, error: "观战的人已经满了。" });
+        return;
+      }
+      if (nameTaken(room, name)) {
+        ack({ ok: false, error: "房间里已有同名的人，请换一个昵称。" });
+        return;
+      }
+      room.spectators.push({ id: socket.id, name });
+      if (!viaList) room.invited.add(socket.id);
+      socketRooms.set(socket.id, room.code);
+      void socket.join(room.code);
+      ack({ ok: true, data: snapshot(room, socket.id) });
+      emitRoomUpdate(room);
+      return;
+    }
+
     if (room.status !== "waiting") {
+      if (viaList) {
+        ack({ ok: false, error: "对局已经开始了，可以进去观战。" });
+        return;
+      }
       // 对局中只允许离线玩家用原昵称回到自己的座位。
       const seat = room.members.find((member) => member.name === name);
       if (!seat) {
@@ -426,31 +505,108 @@ io.on("connection", (socket) => {
       clearTimeout(room.abandonTimer);
       delete room.abandonTimer;
       reassignMember(room, seat.id, socket.id);
-      socketRooms.set(socket.id, code);
-      void socket.join(code);
+      socketRooms.set(socket.id, room.code);
+      void socket.join(room.code);
       ack({ ok: true, data: snapshot(room, socket.id) });
       emitRoomUpdate(room);
+      return;
+    }
+    if (viaList && !room.access.open) {
+      ack({ ok: false, error: "这个房间是邀请制，要有房间码才能加入。" });
       return;
     }
     if (room.members.length >= 4) {
       ack({ ok: false, error: "房间已满。" });
       return;
     }
-    if (room.members.some((member) => member.name === name)) {
-      ack({ ok: false, error: "房间里已有同名玩家，请换一个昵称。" });
+    if (nameTaken(room, name)) {
+      ack({ ok: false, error: "房间里已有同名的人，请换一个昵称。" });
       return;
     }
-    const taken = new Set(room.members.map((member) => member.seat));
-    const freeSeat = ([0, 1, 2, 3] as Seat[]).find((seat) => !taken.has(seat)) ?? null;
-    room.members.push({ id: socket.id, name, isHost: false, connected: true, seat: freeSeat });
-    socketRooms.set(socket.id, code);
-    void socket.join(code);
+    room.members.push({ id: socket.id, name, isHost: false, connected: true, seat: freeSeat(room) });
+    socketRooms.set(socket.id, room.code);
+    void socket.join(room.code);
     ack({ ok: true, data: snapshot(room, socket.id) });
+    emitRoomUpdate(room);
+  });
+
+  socket.on("room:access", (access, ack) => {
+    const room = findRoomForSocket(socket.id);
+    if (!room || room.ownerId !== socket.id) {
+      ack({ ok: false, error: "只有房主可以修改房间设置。" });
+      return;
+    }
+    const next = { ...room.access };
+    for (const key of ["allowSpectators", "spectatorsSeeAll", "open"] as const) {
+      const value = access?.[key];
+      if (value === undefined) continue;
+      if (typeof value !== "boolean") {
+        ack({ ok: false, error: "设置内容不正确。" });
+        return;
+      }
+      next[key] = value;
+    }
+    room.access = next;
+    if (!next.allowSpectators && room.spectators.length > 0) {
+      for (const spectator of room.spectators) closeMemberConnection(room, spectator.id, "房主关闭了观战。");
+      room.spectators = [];
+      room.invited.clear();
+    }
+    ack({ ok: true, data: undefined });
+    emitRoomUpdate(room);
+  });
+
+  socket.on("room:stand", (ack) => {
+    const room = findRoomForSocket(socket.id);
+    const member = room?.members.find((candidate) => candidate.id === socket.id);
+    if (!room || !member) {
+      ack({ ok: false, error: "你当前不在座位上。" });
+      return;
+    }
+    if (room.status !== "waiting") {
+      ack({ ok: false, error: "对局中不能离开座位。" });
+      return;
+    }
+    if (member.isHost) {
+      ack({ ok: false, error: "房主不能改成观战。" });
+      return;
+    }
+    if (!room.access.allowSpectators) {
+      ack({ ok: false, error: "这个房间没有开放观战。" });
+      return;
+    }
+    room.members = room.members.filter((candidate) => candidate.id !== socket.id);
+    room.voice.delete(socket.id);
+    room.spectators.push({ id: socket.id, name: member.name });
+    room.invited.add(socket.id);
+    ack({ ok: true, data: undefined });
     emitRoomUpdate(room);
   });
 
   socket.on("room:sit", (seat, ack) => {
     const room = findRoomForSocket(socket.id);
+    const spectator = room?.spectators.find((candidate) => candidate.id === socket.id);
+    if (room && spectator) {
+      // 观战的人点空座位：坐下一起玩。
+      if (room.status !== "waiting") {
+        ack({ ok: false, error: "对局开始后不能再坐下，等这局结束吧。" });
+        return;
+      }
+      if (!room.access.open && !room.invited.has(socket.id)) {
+        ack({ ok: false, error: "这个房间是邀请制，要有房间码才能坐下。" });
+        return;
+      }
+      if (!isSeat(seat) || room.members.some((candidate) => candidate.seat === seat) || room.members.length >= 4) {
+        ack({ ok: false, error: "这个座位已经有人了。" });
+        return;
+      }
+      room.spectators = room.spectators.filter((candidate) => candidate.id !== socket.id);
+      room.invited.delete(socket.id);
+      room.members.push({ id: socket.id, name: spectator.name, isHost: false, connected: true, seat });
+      ack({ ok: true, data: snapshot(room, socket.id) });
+      emitRoomUpdate(room);
+      return;
+    }
     const member = room?.members.find((candidate) => candidate.id === socket.id);
     if (!room || !member) {
       ack({ ok: false, error: "你当前不在房间中。" });
@@ -504,7 +660,7 @@ io.on("connection", (socket) => {
       ack({ ok: false, error: "你当前不在房间中。" });
       return;
     }
-    if (room.status === "playing") {
+    if (room.status === "playing" && !isSpectator(room, socket.id)) {
       ack({ ok: false, error: "对局进行中不能离开；整场结束后可以选择退出。" });
       return;
     }
@@ -518,6 +674,10 @@ io.on("connection", (socket) => {
     const room = findRoomForSocket(socket.id);
     if (!room || room.status !== "playing" || !room.match) {
       ack({ ok: false, error: "当前没有进行中的对局。" });
+      return;
+    }
+    if (isSpectator(room, socket.id)) {
+      ack({ ok: false, error: "观战中不能操作。" });
       return;
     }
     try {
@@ -556,6 +716,15 @@ io.on("connection", (socket) => {
     const room = findRoomForSocket(socket.id);
     if (!room || room.ownerId !== socket.id) {
       ack({ ok: false, error: "只有房主可以移出玩家。" });
+      return;
+    }
+    if (isSpectator(room, memberId)) {
+      // 观战的人随时可以移出。
+      closeMemberConnection(room, memberId, "你已被房主移出房间。");
+      room.spectators = room.spectators.filter((spectator) => spectator.id !== memberId);
+      room.invited.delete(memberId);
+      ack({ ok: true, data: undefined });
+      emitRoomUpdate(room);
       return;
     }
     if (room.status !== "waiting") {
@@ -607,6 +776,10 @@ io.on("connection", (socket) => {
       ack({ ok: false, error: "你当前不在房间中。" });
       return;
     }
+    if (isSpectator(room, socket.id)) {
+      ack({ ok: false, error: "观战时不能加入语音。" });
+      return;
+    }
     room.voice.set(socket.id, { muted: payload?.muted === true });
     ack({ ok: true, data: iceServersFor(socket.id) });
     emitRoomUpdate(room);
@@ -640,11 +813,13 @@ io.on("connection", (socket) => {
 
   socket.on("room:chat", (payload, ack) => {
     const room = findRoomForSocket(socket.id);
-    const member = room?.members.find((candidate) => candidate.id === socket.id);
+    const member = room?.members.find((candidate) => candidate.id === socket.id)
+      ?? room?.spectators.find((candidate) => candidate.id === socket.id);
     if (!room || !member) {
       ack({ ok: false, error: "你当前不在房间中。" });
       return;
     }
+    const spectator = isSpectator(room, socket.id);
     const message = normalizeChatMessage(payload?.message);
     if (!message) {
       ack({ ok: false, error: `消息需为 1–${ROOM_CHAT_MAX_LENGTH} 个字符。` });
@@ -658,7 +833,7 @@ io.on("connection", (socket) => {
     roomChatTimes.set(socket.id, now);
     room.chat = [
       ...room.chat,
-      { id: randomUUID(), senderId: socket.id, name: member.name, message, createdAt: new Date(now).toISOString() },
+      { id: randomUUID(), senderId: socket.id, name: member.name, message, createdAt: new Date(now).toISOString(), ...(spectator ? { spectator: true } : {}) },
     ].slice(-ROOM_CHAT_LIMIT);
     ack({ ok: true, data: undefined });
     emitRoomUpdate(room);

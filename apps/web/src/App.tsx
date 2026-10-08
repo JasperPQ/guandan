@@ -5,6 +5,7 @@ import { cardImage } from "./CardView.js";
 import { useConfirm } from "./confirm.js";
 import GameRules from "./GameRules.js";
 import RoomChat from "./RoomChat.js";
+import { roomRole, RoomSettingsPanel, SeatSwitch } from "./RoomExtras.js";
 import Table from "./Table.js";
 import { socket } from "./socket.js";
 import { ThemeToggle, useTheme } from "./theme.js";
@@ -51,17 +52,20 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
   onDissolve: () => void;
 }) {
   const me = room.members.find((member) => member.id === socket.id);
+  const { spectating } = roomRole(room);
   const seatedCount = room.members.filter((member) => member.seat !== null).length;
   return (
     <section className="waiting">
       <div className="waiting-head">
         <div>
           <div className="eyebrow">等待大厅</div>
-          <h1>选好座位，对家就是队友。</h1>
+          <h1>{spectating ? "你在观战，有空座位可以点一下坐下。" : "选好座位，对家就是队友。"}</h1>
         </div>
-        <button type="button" className="room-code-button" onClick={onCopy} title="点击复制房间码">
-          <span>房间码</span><strong>{room.code}</strong>
-        </button>
+        {room.code ? (
+          <button type="button" className="room-code-button" onClick={onCopy} title="点击复制房间码">
+            <span>房间码</span><strong>{room.code}</strong>
+          </button>
+        ) : <span className="waiting-hint">从首页列表进来观战，看不到房间码</span>}
       </div>
       <div className="seat-table">
         <div className="seat-table-felt">
@@ -81,7 +85,7 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
                 <span className={`team-dot team-${seat % 2}`} />
                 <small>座位 {seat + 1} · {seat % 2 === 0 ? "A" : "B"} 队</small>
                 <strong>{member ? member.name : "空位"}</strong>
-                <em>{mine ? "你" : member?.isHost ? "房主" : member ? "" : "点击入座"}</em>
+                <em>{mine ? "你" : member?.isHost ? "房主" : member ? "" : spectating && !room.access.open && !room.code ? "邀请制" : "点击入座"}</em>
               </button>
               {me?.isHost && member && !mine && (
                 <button type="button" className="kick-button" onClick={() => onKick(member.id)} title={`把 ${member.name} 移出房间`}>移出</button>
@@ -90,8 +94,10 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
           );
         })}
       </div>
+      <RoomSettingsPanel room={room} />
+      <SeatSwitch room={room} />
       <div className="waiting-actions">
-        <button type="button" className="quiet-button" onClick={onLeave} disabled={busy}>离开房间</button>
+        <button type="button" className="quiet-button" onClick={onLeave} disabled={busy}>{spectating ? "离开观战" : "离开房间"}</button>
         {me?.isHost && <button type="button" className="quiet-button danger" onClick={onDissolve} disabled={busy}>解散房间</button>}
         {me?.isHost ? (
           <button type="button" className="primary-button" onClick={onStart} disabled={busy || seatedCount < 4}>
@@ -103,7 +109,13 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
   );
 }
 
-function OnlineTables({ rooms, connected }: { rooms: PublicRoomSummary[]; connected: boolean }) {
+function OnlineTables({ rooms, connected, busy, onJoin }: {
+  rooms: PublicRoomSummary[];
+  connected: boolean;
+  busy: boolean;
+  /** 从列表加入空座位（spectate 为 false）或者进去观战。 */
+  onJoin: (roomId: string, spectate: boolean) => void;
+}) {
   const admin = useAdminToken();
 
   function dissolve(room: PublicRoomSummary) {
@@ -127,6 +139,8 @@ function OnlineTables({ rooms, connected }: { rooms: PublicRoomSummary[]; connec
           <header>
             <span className={`status-chip ${room.status}`}>{room.status === "waiting" ? "等待中" : room.status === "playing" ? `第 ${room.handNumber} 局` : "已结束"}</span>
             {room.teamLevels && <span className="online-levels">A 队打 {rankLabel(room.teamLevels[0])} · B 队打 {rankLabel(room.teamLevels[1])}</span>}
+            {room.open && <em className="online-room-tag open">公开</em>}
+            {room.spectators > 0 && <em className="online-room-tag">观战 {room.spectators}</em>}
           </header>
           <ul>
             {[...room.players].sort((left, right) => (left.seat ?? 9) - (right.seat ?? 9)).map((player) => (
@@ -136,6 +150,18 @@ function OnlineTables({ rooms, connected }: { rooms: PublicRoomSummary[]; connec
               </li>
             ))}
           </ul>
+          {(() => {
+            const canSit = room.open && room.status === "waiting" && room.players.length < 4;
+            if (!canSit && !room.allowSpectators) return null;
+            return (
+              <div className="online-room-actions">
+                {canSit && <button className="online-room-join" type="button" disabled={busy || !connected} onClick={() => onJoin(room.id, false)}>加入</button>}
+                {room.allowSpectators && room.status !== "finished" && (
+                  <button className="online-room-watch" type="button" disabled={busy || !connected} onClick={() => onJoin(room.id, true)}>观战</button>
+                )}
+              </div>
+            );
+          })()}
           {admin.token && <button className="admin-dissolve" type="button" onClick={() => dissolve(room)}>解散牌桌</button>}
         </article>
       ))}
@@ -155,6 +181,8 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [lobbyRooms, setLobbyRooms] = useState<PublicRoomSummary[]>([]);
+  // 观战时从谁的座位看（默认座位 1）。
+  const [watchId, setWatchId] = useState("");
   const voice = useVoice(room);
   // 白天 / 夜间画面：首页、等待大厅、牌桌共用，顶栏按钮随时切换；和游戏中心、其他游戏共用同一个选择。
   const [theme, toggleTheme] = useTheme();
@@ -231,6 +259,21 @@ function App() {
     else request<LobbyRoomSnapshot>((ack) => socket.emit("room:join", { name: nickname, code: roomCode }, ack), done);
   }
 
+  /** 从首页列表加入空座位或进去观战（用上面填的昵称）。 */
+  function joinListed(roomId: string, spectate: boolean) {
+    const nickname = name.trim();
+    if (nickname.length < 2 || nickname.length > 18) {
+      setNotice("");
+      setError("先在上面填好你的昵称（2–18 个字符）。");
+      document.getElementById("player-name")?.focus();
+      return;
+    }
+    request<LobbyRoomSnapshot>((ack) => socket.emit("room:join", { name: nickname, roomId, spectate }, ack), (snapshot) => {
+      setRoom(snapshot);
+      setNotice(spectate ? "正在观战。" : "已加入房间。");
+    });
+  }
+
   function sendAction(action: MatchAction) {
     request<LobbyRoomSnapshot>((ack) => socket.emit("game:action", action, ack), setRoom);
   }
@@ -269,6 +312,8 @@ function App() {
   }
 
   if (room?.status === "playing" && room.match) {
+    const players = room.match.players;
+    const watched = players.some((player) => player.id === watchId) ? watchId : players[0]!.id;
     return (
       <main className="game-shell">
         <Table
@@ -283,6 +328,9 @@ function App() {
           onAction={sendAction}
           onRematch={voteRematch}
           onDissolve={dissolveRoom}
+          watchId={watched}
+          onWatch={setWatchId}
+          onLeave={leaveRoom}
         />
         {confirmDialog}
       </main>
@@ -353,7 +401,8 @@ function App() {
           </section>
           <section className="online-section">
             <h2>在线牌桌</h2>
-            <OnlineTables rooms={lobbyRooms} connected={connected} />
+            <OnlineTables rooms={lobbyRooms} connected={connected} busy={busy} onJoin={joinListed} />
+            <p className="field-hint">这里不显示房间码。房主设为公开的牌桌可以直接加入，允许观战的牌桌可以进去看。</p>
           </section>
         </>
       )}

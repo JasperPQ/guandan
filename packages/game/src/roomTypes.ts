@@ -16,10 +16,33 @@ export interface RoomChatMessage {
 	name: string;
 	message: string;
 	createdAt: string;
+	/** 观战的人发的。 */
+	spectator?: boolean;
+}
+
+/** 房主在房间里随时可以改的「谁能进来」设置。 */
+export interface RoomAccess {
+	/** 允许观战：有房间码、或者从首页列表都能进来看。 */
+	readonly allowSpectators: boolean;
+	/** 观战的人能看到所有人的手牌（上帝视角）；关掉时只看公开信息。 */
+	readonly spectatorsSeeAll: boolean;
+	/** 公开房间：不认识的人也能从首页列表直接加入空座位。 */
+	readonly open: boolean;
+}
+
+export const DEFAULT_ROOM_ACCESS: RoomAccess = { allowSpectators: true, spectatorsSeeAll: false, open: false };
+
+/** 观战的人：不占座位，不能操作、投票或进语音，可以聊天。 */
+export interface Spectator {
+	readonly id: string;
+	readonly name: string;
 }
 
 export interface LobbyRoomSnapshot {
+	/** 从首页列表进来观战的人看不到房间码（空字符串）。 */
 	code: string;
+	spectators: Spectator[];
+	access: RoomAccess;
 	status: "waiting" | "playing";
 	members: LobbyMember[];
 	chat: RoomChatMessage[];
@@ -56,9 +79,20 @@ export interface RematchState {
 export interface PublicRoomSummary {
 	id: string;
 	status: "waiting" | "playing" | "finished";
+	open: boolean;
+	allowSpectators: boolean;
+	spectators: number;
 	players: { name: string; connected: boolean; seat: Seat | null }[];
 	teamLevels?: [number, number];
 	handNumber?: number;
+}
+
+/** 用房间码加入，或者从首页列表按房间的公开 id 加入；spectate 为 true 时进来观战。 */
+export interface JoinRoomPayload {
+	readonly name: string;
+	readonly code?: string;
+	readonly roomId?: string;
+	readonly spectate?: boolean;
 }
 
 export type AckResponse<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -66,8 +100,12 @@ export type RoomAck<T> = (response: AckResponse<T>) => void;
 
 export interface ClientToServerEvents {
 	"room:create": (payload: { name: string }, ack: RoomAck<LobbyRoomSnapshot>) => void;
-	"room:join": (payload: { name: string; code: string }, ack: RoomAck<LobbyRoomSnapshot>) => void;
+	"room:join": (payload: JoinRoomPayload, ack: RoomAck<LobbyRoomSnapshot>) => void;
+	/** 换座位；观战的人点空座位就坐下（邀请制房间要有房间码进来的才行）。 */
 	"room:sit": (seat: Seat, ack: RoomAck<LobbyRoomSnapshot>) => void;
+	/** 等待中：玩家（房主除外）改成观战。 */
+	"room:stand": (ack: RoomAck<void>) => void;
+	"room:access": (access: Partial<RoomAccess>, ack: RoomAck<void>) => void;
 	"room:start": (ack: RoomAck<LobbyRoomSnapshot>) => void;
 	"room:leave": (ack: RoomAck<void>) => void;
 	"room:chat": (payload: { message: string }, ack: RoomAck<void>) => void;
