@@ -41,10 +41,12 @@ function ConnectionStatus({ connected }: { connected: boolean }) {
 
 const SEAT_POSITIONS = ["seat-pos-bottom", "seat-pos-right", "seat-pos-top", "seat-pos-left"];
 
-function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDissolve }: {
+function WaitingRoom({ room, busy, onSit, onAddBot, onStart, onLeave, onCopy, onKick, onDissolve }: {
   room: LobbyRoomSnapshot;
   busy: boolean;
   onSit: (seat: Seat) => void;
+  /** 房主在空座位上加人机。 */
+  onAddBot: (seat: Seat) => void;
   onStart: () => void;
   onLeave: () => void;
   onCopy: () => void;
@@ -59,7 +61,7 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
       <div className="waiting-head">
         <div>
           <div className="eyebrow">等待大厅</div>
-          <h1>{spectating ? "你在观战，有空座位可以点一下坐下。" : "选好座位，对家就是队友。"}</h1>
+          <h1>{spectating ? "你在观战，有空座位可以点一下坐下。" : me?.isHost ? "选好座位，对家就是队友；空座位可以加人机。" : "选好座位，对家就是队友。"}</h1>
         </div>
         {room.code ? (
           <button type="button" className="room-code-button" onClick={onCopy} title="点击复制房间码">
@@ -85,10 +87,13 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
                 <span className={`team-dot team-${seat % 2}`} />
                 <small>座位 {seat + 1} · {seat % 2 === 0 ? "A" : "B"} 队</small>
                 <strong>{member ? member.name : "空位"}</strong>
-                <em>{mine ? "你" : member?.isHost ? "房主" : member ? "" : spectating && !room.access.open && !room.code ? "邀请制" : "点击入座"}</em>
+                <em>{mine ? "你" : member?.bot ? <span className="bot-badge">人机</span> : member?.isHost ? "房主" : member ? "" : spectating && !room.access.open && !room.code ? "邀请制" : "点击入座"}</em>
               </button>
               {me?.isHost && member && !mine && (
                 <button type="button" className="kick-button" onClick={() => onKick(member.id)} title={`把 ${member.name} 移出房间`}>移出</button>
+              )}
+              {me?.isHost && !member && (
+                <button type="button" className="quiet-button add-bot-button" disabled={busy} onClick={() => onAddBot(seat)}>加人机</button>
               )}
             </div>
           );
@@ -101,7 +106,7 @@ function WaitingRoom({ room, busy, onSit, onStart, onLeave, onCopy, onKick, onDi
         {me?.isHost && <button type="button" className="quiet-button danger" onClick={onDissolve} disabled={busy}>解散房间</button>}
         {me?.isHost ? (
           <button type="button" className="primary-button" onClick={onStart} disabled={busy || seatedCount < 4}>
-            {seatedCount < 4 ? `等待坐满（${seatedCount}/4）` : "开始对局"}
+            {seatedCount < 4 ? `坐满才能开始（${seatedCount}/4）` : "开始对局"}
           </button>
         ) : <span className="waiting-hint">等待房主开始（{seatedCount}/4）</span>}
       </div>
@@ -146,7 +151,7 @@ function OnlineTables({ rooms, connected, busy, onJoin }: {
             {[...room.players].sort((left, right) => (left.seat ?? 9) - (right.seat ?? 9)).map((player) => (
               <li key={player.name} className={player.connected ? "" : "offline"}>
                 {player.seat !== null && <span className={`team-dot team-${player.seat % 2}`} />}
-                {player.name}{player.connected ? "" : "（离线）"}
+                {player.name}{player.bot && <span className="bot-badge">人机</span>}{player.connected ? "" : "（离线）"}
               </li>
             ))}
           </ul>
@@ -326,6 +331,7 @@ function App() {
           themeToggle={themeToggle}
           chat={<RoomChat room={room} voice={voice} />}
           onAction={sendAction}
+          onCancelAuto={() => roomCommand((ack) => socket.emit("room:auto", false, ack))}
           onRematch={voteRematch}
           onDissolve={dissolveRoom}
           watchId={watched}
@@ -355,6 +361,7 @@ function App() {
             room={room}
             busy={busy}
             onSit={(seat) => request<LobbyRoomSnapshot>((ack) => socket.emit("room:sit", seat, ack), setRoom)}
+            onAddBot={(seat) => roomCommand((ack) => socket.emit("room:add-bot", seat, ack))}
             onStart={() => request<LobbyRoomSnapshot>((ack) => socket.emit("room:start", ack), setRoom)}
             onLeave={leaveRoom}
             onCopy={copyRoomCode}

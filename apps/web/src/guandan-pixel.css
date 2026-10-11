@@ -419,3 +419,12 @@ body { background: repeating-conic-gradient(#13101a 0 25%, #0e0c13 0 50%) 0 0 / 
   :is(.app-shell, .game-shell) .spectate-hint { display: none; }
   :is(.app-shell, .game-shell) .spectate-seat { min-height: 24px; padding: 0 6px; }
 }
+
+/* 人机和托管 */
+:is(.app-shell, .game-shell) .bot-badge { display: inline-block; margin-left: 6px; padding: 0 4px; color: var(--bg); background: var(--muted); font-size: 12px; font-style: normal; line-height: 1.5; }
+.app-shell .seat-slot .add-bot-button { min-height: 0; padding: 2px 10px; font-size: 12px; }
+.game-shell .seat-tag.bot { --rim: #b9b0d0; --shade: #2a2338; color: var(--bg); background: var(--muted); }
+.game-shell .seat-tag.auto { --rim: #9ad1ff; --shade: #10304a; color: #0b1a2a; background: #6fb6ff; }
+.game-shell .turn-seconds { margin-left: 6px; color: var(--gold); font-weight: 400; }
+.game-shell .auto-banner { display: inline-flex; align-items: center; gap: 10px; color: var(--gold); font-size: 12px; }
+.game-shell .auto-banner .primary-button { padding: 2px 10px; font-size: 12px; }

@@ -107,6 +107,8 @@ function SeatPlate({ seat, match, member, position, viewSeat }: {
       <span className={`team-dot team-${seat % 2}`} aria-hidden="true" />
       <strong>{player.name}</strong>
       {partner && <span className="seat-tag">队友</span>}
+      {member?.bot && <span className="seat-tag bot">人机</span>}
+      {member?.auto && <span className="seat-tag auto">托管</span>}
       {member?.connected === false && <span className="seat-tag offline">离线</span>}
       {place >= 0
         ? <span className="seat-place">{PLACE_NAMES[place]}</span>
@@ -125,6 +127,7 @@ function Table({
   themeToggle,
   chat,
   onAction,
+  onCancelAuto,
   onRematch,
   onDissolve,
   watchId,
@@ -141,6 +144,8 @@ function Table({
   themeToggle: ReactNode;
   chat: ReactNode;
   onAction: (action: MatchAction) => void;
+  /** 取消托管。 */
+  onCancelAuto: () => void;
   onRematch: (accept: boolean) => void;
   onDissolve: () => void;
   /** 观战时从这位玩家的座位看。 */
@@ -175,6 +180,20 @@ function Table({
     return () => window.clearInterval(timer);
   }, [Boolean(rematch)]);
   const secondsLeft = Math.max(0, Math.ceil((rematchDeadline - now) / 1000));
+  // 真人这一步的倒计时（人机、托管、离线的人行动时服务器不发）
+  const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
+  useEffect(() => {
+    setTurnDeadline(room.turnRemainingMs === undefined ? null : Date.now() + room.turnRemainingMs);
+    setNow(Date.now());
+  }, [room]);
+  useEffect(() => {
+    if (turnDeadline === null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [turnDeadline]);
+  const turnSeconds = turnDeadline === null ? null : Math.max(0, Math.ceil((turnDeadline - now) / 1000));
+  const meMember = room.members.find((member) => member.id === socket.id);
+  const autoOn = !spectating && meMember?.auto === true;
   const accepted = new Set(rematch?.acceptedIds ?? []);
   const myId = match.players[mySeat]?.id ?? "";
 
@@ -250,7 +269,7 @@ function Table({
           <span><span className={`team-dot team-${1 - myTeam}`} />{teamName(1 - myTeam)} {levelText(match.teamLevels[1 - myTeam]!)}</span>
         </span>
         <span className={myTurn || mustTribute || mustReturn ? "turn-indicator my-turn" : "turn-indicator"}>
-          <span className="turn-dot" />{turnText}
+          <span className="turn-dot" />{turnText}{turnSeconds !== null && match.phase !== "handOver" && <b className="turn-seconds">{turnSeconds} 秒</b>}
         </span>
         <span className="topbar-feedback" role="status">{error ? <span className="error-text">{error}</span> : notice}</span>
         <GameRules />
@@ -283,7 +302,9 @@ function Table({
             <SpectateBar room={room} watchId={match.players[mySeat]?.id ?? ""} onWatch={onWatch} onLeave={onLeave} />
           ) : (
           <>
-          <span className="selection-hint">{eligible ? (mustTribute ? "请选择一张最大的牌进贡" : "请选择一张 10 以下的牌还贡") : selectionHint}</span>
+          {autoOn ? (
+            <span className="auto-banner" role="status">托管中：人机正在替你出牌<button type="button" className="primary-button" onClick={onCancelAuto}>取消托管</button></span>
+          ) : <span className="selection-hint">{eligible ? (mustTribute ? "请选择一张最大的牌进贡" : "请选择一张 10 以下的牌还贡") : selectionHint}</span>}
           <div className="my-actions">
             {mustTribute && (
               <button type="button" className="primary-button" disabled={busy || selected.size !== 1} onClick={() => onAction({ type: "tribute", cardId: [...selected][0]! })}>进贡</button>
@@ -346,7 +367,7 @@ function Table({
                 </div>
                 {!spectating && (
                   <button type="button" className="primary-button" disabled={busy || match.ready[mySeat]} onClick={() => onAction({ type: "ready" })}>
-                    {match.ready[mySeat] ? "等待其他玩家准备" : "准备下一局"}
+                    {match.ready[mySeat] ? "等待其他玩家准备" : `准备下一局${turnSeconds !== null ? `（${turnSeconds} 秒）` : ""}`}
                   </button>
                 )}
               </>
