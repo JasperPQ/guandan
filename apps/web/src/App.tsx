@@ -13,6 +13,7 @@ import { GAME_ID } from "./tutorialGame.js";
 import TutorialMode from "./TutorialMode.js";
 import { socket } from "./socket.js";
 import { ThemeToggle, useTheme } from "./theme.js";
+import { MusicToggle, useBgm, type BgmTrack } from "./bgm.js";
 import { useVoice } from "./voice.js";
 
 type EntryMode = "create" | "join";
@@ -180,6 +181,9 @@ function OnlineTables({ rooms, connected, busy, onJoin }: {
   );
 }
 
+// 背景音乐：进了房间（等候房间、对局、观战）和新手教程里放，首页和房间列表不放。gain / start / end 是按这首曲子量的（见 bgm.tsx）。
+const BGM: BgmTrack = { src: `${import.meta.env.BASE_URL}bgm/guandan.mp3`, gain: 0.79, start: 0.35, end: 61.7 };
+
 function App() {
   const [mode, setMode] = useState<EntryMode>("create");
   const [name, setName] = useState("");
@@ -195,11 +199,12 @@ function App() {
   const voice = useVoice(room);
   // 白天 / 夜间画面：首页、等待大厅、牌桌共用，顶栏按钮随时切换；和游戏中心、其他游戏共用同一个选择。
   const [theme, toggleTheme] = useTheme();
-  const themeToggle = <ThemeToggle theme={theme} onToggle={toggleTheme} />;
+  const themeToggle = <><ThemeToggle theme={theme} onToggle={toggleTheme} /><MusicToggle /></>;
   // 解散房间等确认用像素弹窗。
   const [confirm, confirmDialog] = useConfirm();
   // 新手教程：首页或等候房间点进来（地址带 ?tutorial 时直接打开，游戏中心可以直接链过来）
   const [tutorialOpen, setTutorialOpen] = useState(() => new URLSearchParams(window.location.search).has("tutorial"));
+  useBgm(room || tutorialOpen ? BGM : null);
   function closeTutorial() {
     setTutorialOpen(false);
     const params = new URLSearchParams(window.location.search);
