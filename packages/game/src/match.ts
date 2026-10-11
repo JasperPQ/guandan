@@ -51,6 +51,8 @@ export interface HandState {
 	actions: (SeatAction | null)[];
 	finishOrder: Seat[];
 	tribute: TributeState | null;
+	/** 这一局已经打出去的牌（公开信息，人机用来记牌）。 */
+	played: Card[];
 }
 
 export interface HandResult {
@@ -117,6 +119,7 @@ function newHand(number: number, level: number, dealerTeam: Team | null, random:
 		actions: [null, null, null, null],
 		finishOrder: [],
 		tribute: null,
+		played: [],
 	};
 }
 
@@ -273,6 +276,7 @@ function applyPlay(state: MatchState, seat: Seat, cardIds: readonly string[], re
 
 	if (!hand.lastPlay) hand.actions = [null, null, null, null];
 	hand.hands[seat] = remaining;
+	hand.played.push(...cards);
 	hand.lastPlay = { seat, cards, combo };
 	hand.passes = 0;
 	hand.actions[seat] = { kind: "play", cards, combo };
