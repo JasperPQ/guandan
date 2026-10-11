@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import {
   RuleViolation,
   applyAction,
+  botCommand,
   createMatch,
   DEFAULT_ROOM_ACCESS,
   viewForPlayer,
@@ -13,6 +14,7 @@ import {
   type IceServerConfig,
   type LobbyMember,
   type LobbyRoomSnapshot,
+  type MatchAction,
   type MatchState,
   type MatchView,
   type PublicRoomSummary,
@@ -44,6 +46,15 @@ interface RoomState {
   voice: Map<string, { muted: boolean }>;
   /** 整轮结束后的继续投票。 */
   rematch?: { deadline: number; accepted: Set<string>; timer: ReturnType<typeof setTimeout> };
+  /** 真人这一步的截止时间（同一步里所有要行动的真人共用）；key 是这一步的标识。 */
+  turn?: { deadline: number; timer: ReturnType<typeof setTimeout>; key: string };
+  /** 这一步开始的时间和标识：换人、换阶段时才变。 */
+  stageKey?: string;
+  stageStartedAt: number;
+  /** 人机座位（人机、托管、离线的人）各自的出手计时，按「步#座位」区分。 */
+  botTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** 每位真人连续超时的次数，到 AUTO_AFTER_TIMEOUTS 次转托管。 */
+  timeouts: Map<string, number>;
 }
 
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -57,6 +68,19 @@ const ADMIN_RETRY_DELAY_MS = 2_000;
 const VOICE_SIGNAL_MAX_LENGTH = 20_000;
 const MAX_SPECTATORS = 20;
 const TURN_CREDENTIAL_TTL_SECONDS = 24 * 60 * 60;
+/** 每一步的限时（秒）：出牌、进贡、还贡 30 秒，一局结束后的「准备」60 秒。 */
+const PLAY_SECONDS = 30;
+const READY_SECONDS = 60;
+/** 测试用：覆盖每一步的时长（毫秒）。 */
+const TURN_MS_OVERRIDE = process.env.TURN_MS ? Number(process.env.TURN_MS) : undefined;
+/** 人机的名字，按顺序取第一个没人用的（全站统一：咕噜一号、二号……，带「人机」标签）。 */
+const BOT_NAMES = ["咕噜一号", "咕噜二号", "咕噜三号"];
+/** 人机每步停顿的倍数；测试设 0，本地试玩可以设 0.3 加快。 */
+const BOT_DELAY_SCALE = Number(process.env.BOT_DELAY_SCALE ?? 1);
+/** 离线的人轮到时先等 3 秒（刷新页面、短暂断线来得及回来），再由人机代打，不算超时。 */
+const OFFLINE_GRACE_MS = 3_000;
+/** 真人连续超时几次转托管。 */
+const AUTO_AFTER_TIMEOUTS = 2;
 const rooms = new Map<string, RoomState>();
 const socketRooms = new Map<string, string>();
 const roomChatTimes = new Map<string, number>();
@@ -151,6 +175,7 @@ function snapshot(room: RoomState, viewerId: string): LobbyRoomSnapshot {
     members: room.members.map((member) => ({ ...member })),
     chat: room.chat.map((entry) => ({ ...entry })),
     voice: [...room.voice].map(([id, state]) => ({ id, muted: state.muted })),
+    ...(room.turn ? { turnRemainingMs: Math.max(0, room.turn.deadline - Date.now()) } : {}),
     ...(room.rematch ? { rematch: { remainingMs: Math.max(0, room.rematch.deadline - Date.now()), acceptedIds: [...room.rematch.accepted] } } : {}),
     ...(room.match ? { match: seated ? viewForPlayer(room.match, viewerId) : spectatorView(room) } : {}),
   };
@@ -172,6 +197,19 @@ function nameTaken(room: RoomState, name: string): boolean {
   return room.members.some((member) => member.name === name) || room.spectators.some((spectator) => spectator.name === name);
 }
 
+/** 真人玩家（不含人机）。房间里没有真人就关掉，房主也只交给真人。 */
+function humans(room: RoomState): LobbyMember[] {
+  return room.members.filter((member) => !member.bot);
+}
+
+function setAuto(room: RoomState, playerId: string, enabled: boolean): void {
+  room.members = room.members.map((member) => {
+    if (member.id !== playerId) return member;
+    const { auto: _auto, ...rest } = member;
+    return enabled ? { ...rest, auto: true } : rest;
+  });
+}
+
 function roomSummaries(): PublicRoomSummary[] {
   const order = { playing: 0, waiting: 1, finished: 2 } as const;
   return [...rooms.values()]
@@ -184,7 +222,7 @@ function roomSummaries(): PublicRoomSummary[] {
         open: room.access.open,
         allowSpectators: room.access.allowSpectators,
         spectators: room.spectators.length,
-        players: room.members.map((member) => ({ name: member.name, connected: member.connected, seat: member.seat })),
+        players: room.members.map((member) => ({ name: member.name, connected: member.connected, seat: member.seat, ...(member.bot ? { bot: true } : {}) })),
         ...(match ? { teamLevels: [...match.teamLevels] as [number, number], handNumber: match.hand.number } : {}),
       };
     })
@@ -227,7 +265,7 @@ function emitLobbyUpdate(): void {
 function emitRoomUpdate(room: RoomState): void {
   // 每位成员单独发送，只包含自己的手牌。
   for (const member of room.members) {
-    io.to(member.id).emit("room:updated", snapshot(room, member.id));
+    if (!member.bot) io.to(member.id).emit("room:updated", snapshot(room, member.id));
   }
   for (const spectator of room.spectators) io.to(spectator.id).emit("room:updated", snapshot(room, spectator.id));
   emitLobbyUpdate();
@@ -242,7 +280,7 @@ function findRoomForSocket(socketId: string): RoomState | undefined {
 function scheduleAbandonedRoomClose(room: RoomState): void {
   clearTimeout(room.abandonTimer);
   room.abandonTimer = setTimeout(() => {
-    if (rooms.get(room.code) !== room || room.members.some((member) => member.connected)) return;
+    if (rooms.get(room.code) !== room || humans(room).some((member) => member.connected)) return;
     deleteRoom(room, "玩家都离线了，房间已关闭。");
   }, ROOM_ABANDON_MS);
   room.abandonTimer.unref();
@@ -266,18 +304,20 @@ function removeMember(socketId: string): void {
     room.members = room.members.map((member) =>
       member.id === socketId ? { ...member, connected: false } : member,
     );
-    if (room.members.every((member) => !member.connected)) scheduleAbandonedRoomClose(room);
+    if (humans(room).every((member) => !member.connected)) scheduleAbandonedRoomClose(room);
+    // 轮到他的话，等 OFFLINE_GRACE_MS 后由人机代打
+    updateTurnTimer(room);
     emitRoomUpdate(room);
     return;
   }
 
   room.members = room.members.filter((member) => member.id !== socketId);
-  if (room.members.length === 0) {
+  if (humans(room).length === 0) {
     deleteRoom(room, "玩家都离开了，房间已关闭。");
     return;
   }
   if (room.ownerId === socketId) {
-    room.ownerId = room.members[0]!.id;
+    room.ownerId = humans(room)[0]!.id;
     room.members = room.members.map((member) => ({ ...member, isHost: member.id === room.ownerId }));
   }
   emitRoomUpdate(room);
@@ -298,6 +338,7 @@ function deleteRoom(room: RoomState, reason = "房间已关闭。"): void {
   room.spectators = [];
   clearTimeout(room.abandonTimer);
   clearTimeout(room.rematch?.timer);
+  clearGameTimers(room);
   for (const member of room.members) socketRooms.delete(member.id);
   rooms.delete(room.code);
   emitLobbyUpdate();
@@ -313,11 +354,11 @@ function removeMembers(room: RoomState, memberIds: string[], reason: string): bo
   for (const memberId of memberIds) closeMemberConnection(room, memberId, reason);
   for (const memberId of memberIds) room.voice.delete(memberId);
   room.members = room.members.filter((member) => !memberIds.includes(member.id));
-  if (room.members.length === 0) {
+  if (humans(room).length === 0) {
     deleteRoom(room);
     return false;
   }
-  if (!room.members.some((member) => member.id === room.ownerId)) room.ownerId = room.members[0]!.id;
+  if (!room.members.some((member) => member.id === room.ownerId)) room.ownerId = humans(room)[0]!.id;
   room.members = room.members.map((member) => ({ ...member, isHost: member.id === room.ownerId }));
   return true;
 }
@@ -331,6 +372,7 @@ function returnToWaiting(room: RoomState, kickedIds: string[], reason: string): 
   const offlineIds = room.members.filter((member) => !member.connected && !kickedIds.includes(member.id)).map((member) => member.id);
   if (!removeMembers(room, [...kickedIds, ...offlineIds], reason)) return;
   room.status = "waiting";
+  clearGameTimers(room);
   delete room.match;
   emitRoomUpdate(room);
 }
@@ -345,7 +387,200 @@ function startRematchVote(room: RoomState): void {
     returnToWaiting(room, pending, "没有在 1 分钟内确认继续，已被移出房间。");
   }, REMATCH_TIMEOUT_MS);
   timer.unref();
-  room.rematch = { deadline: Date.now() + REMATCH_TIMEOUT_MS, accepted: new Set(), timer };
+  // 人机总是同意再来一场
+  const bots = room.members.filter((member) => member.bot).map((member) => member.id);
+  room.rematch = { deadline: Date.now() + REMATCH_TIMEOUT_MS, accepted: new Set(bots), timer };
+}
+
+// ---------------------------------------------------------------------------
+// 计时、人机、托管
+// ---------------------------------------------------------------------------
+
+/** 这一步要等哪些座位：出牌时是轮到的人，进贡 / 还贡 / 准备是还没做的那几个人。 */
+function pendingSeats(match: MatchState): Seat[] {
+  const hand = match.hand;
+  const tribute = hand.tribute;
+  switch (match.phase) {
+    case "playing":
+      return [hand.turn];
+    case "tribute":
+      return tribute ? tribute.givers.filter((seat) => !tribute.given[seat]) : [];
+    case "return":
+      return tribute ? tribute.transfers.filter((transfer) => !tribute.returns.some((done) => done.from === transfer.to)).map((transfer) => transfer.to) : [];
+    case "handOver":
+      return ([0, 1, 2, 3] as Seat[]).filter((seat) => !match.ready[seat]);
+    default:
+      return [];
+  }
+}
+
+/** 这一步的标识：换人、换阶段、换局时才变（同一步里别人先做完不重新计时）。 */
+function stageKeyOf(match: MatchState): string {
+  const hand = match.hand;
+  const base = `${hand.number}:${match.phase}`;
+  return match.phase === "playing" ? `${base}:${hand.turn}:${hand.played.length}:${hand.passes}` : base;
+}
+
+function stageMs(match: MatchState): number {
+  return TURN_MS_OVERRIDE ?? (match.phase === "handOver" ? READY_SECONDS : PLAY_SECONDS) * 1000;
+}
+
+/** 这个座位由人机行动：人机座位、托管、离线的人。 */
+function robotSeat(room: RoomState, playerId: string): boolean {
+  const member = room.members.find((candidate) => candidate.id === playerId);
+  return !member || member.bot === true || member.auto === true || !member.connected;
+}
+
+function clearTurnTimer(room: RoomState): void {
+  clearTimeout(room.turn?.timer);
+  delete room.turn;
+}
+
+function clearGameTimers(room: RoomState): void {
+  clearTurnTimer(room);
+  for (const timer of room.botTimers.values()) clearTimeout(timer);
+  room.botTimers.clear();
+  delete room.stageKey;
+}
+
+/** 人机每一步前停多久：让大家看清上一手。离线的人先等 3 秒。 */
+function botDelay(room: RoomState, match: MatchState, playerId: string): number {
+  const member = room.members.find((candidate) => candidate.id === playerId);
+  const jitter = Math.random();
+  let ms = match.phase === "handOver" ? 1500 + 1500 * jitter
+    : match.phase === "playing" ? 700 + 900 * jitter
+    : 900 + 800 * jitter;
+  if (member && !member.bot && !member.connected) ms = Math.max(ms, OFFLINE_GRACE_MS);
+  return ms * BOT_DELAY_SCALE;
+}
+
+/**
+ * 每次对局变化、有人掉线 / 回来、托管开关后重新安排：
+ * - 真人：这一步开始后限时（出牌 / 进贡 / 还贡 30 秒，准备 60 秒），到点按超时处理；
+ * - 人机座位（人机、托管、离线的人）：停顿一下再行动，没有倒计时。
+ */
+function updateTurnTimer(room: RoomState): void {
+  const match = room.match;
+  if (room.status !== "playing" || !match || match.phase === "finished") {
+    clearGameTimers(room);
+    return;
+  }
+  const key = stageKeyOf(match);
+  if (room.stageKey !== key) {
+    room.stageKey = key;
+    room.stageStartedAt = Date.now();
+    clearTurnTimer(room);
+  }
+  const pending = pendingSeats(match);
+  const robots = pending.filter((seat) => robotSeat(room, match.players[seat]!.id));
+  const waitingHumans = pending.filter((seat) => !robots.includes(seat));
+
+  if (waitingHumans.length === 0) clearTurnTimer(room);
+  else if (room.turn?.key !== key) {
+    const deadline = room.stageStartedAt + stageMs(match);
+    clearTurnTimer(room);
+    const timer = setTimeout(() => expireTurn(room, key), Math.max(0, deadline - Date.now()));
+    timer.unref();
+    room.turn = { deadline, timer, key };
+  }
+
+  for (const [timerId, timer] of room.botTimers) {
+    const [timerKey, seatText] = timerId.split("#");
+    if (timerKey !== key || !robots.includes(Number(seatText) as Seat)) {
+      clearTimeout(timer);
+      room.botTimers.delete(timerId);
+    }
+  }
+  for (const seat of robots) {
+    const timerId = `${key}#${seat}`;
+    if (room.botTimers.has(timerId)) continue;
+    const playerId = match.players[seat]!.id;
+    const timer = setTimeout(() => runBot(room, seat, key, timerId), botDelay(room, match, playerId));
+    timer.unref();
+    room.botTimers.set(timerId, timer);
+  }
+}
+
+/** 人机替这个座位走一步；出错时按超时的默认动作处理。 */
+function robotAction(match: MatchState, seat: Seat): MatchAction | null {
+  const playerId = match.players[seat]!.id;
+  // 人机只看得到自己座位能看到的东西
+  return botCommand(viewForPlayer(match, playerId), playerId);
+}
+
+/** 超时的默认动作：跟牌时不出；领出、进贡、还贡由人机挑；准备阶段直接准备。 */
+function timeoutAction(match: MatchState, seat: Seat): MatchAction | null {
+  if (match.phase === "playing" && match.hand.lastPlay) return { type: "pass" };
+  if (match.phase === "handOver") return { type: "ready" };
+  return robotAction(match, seat);
+}
+
+function applyFor(room: RoomState, seat: Seat, action: MatchAction | null): boolean {
+  const match = room.match!;
+  if (!action) return false;
+  try {
+    room.match = applyAction(match, match.players[seat]!.id, action);
+    return true;
+  } catch (error) {
+    console.error("自动行动失败", error);
+    return false;
+  }
+}
+
+function runBot(room: RoomState, seat: Seat, key: string, timerId: string): void {
+  room.botTimers.delete(timerId);
+  const match = room.match;
+  if (rooms.get(room.code) !== room || !match || match.phase === "finished" || stageKeyOf(match) !== key) return;
+  if (!pendingSeats(match).includes(seat) || !robotSeat(room, match.players[seat]!.id)) return;
+  let action: MatchAction | null = null;
+  try {
+    action = robotAction(match, seat);
+  } catch (error) {
+    console.error("人机出错", error);
+  }
+  if (!applyFor(room, seat, action)) applyFor(room, seat, timeoutAction(match, seat));
+  afterMatchChange(room);
+  emitRoomUpdate(room);
+}
+
+/** 真人到点没动：按默认动作处理；出牌、进贡、还贡连续超时 2 次转托管。 */
+function expireTurn(room: RoomState, key: string): void {
+  if (room.turn?.key === key) delete room.turn;
+  const match = room.match;
+  if (rooms.get(room.code) !== room || !match || match.phase === "finished" || stageKeyOf(match) !== key) return;
+  const due = pendingSeats(match).filter((seat) => !robotSeat(room, match.players[seat]!.id));
+  for (const seat of due) {
+    const current = room.match!;
+    if (stageKeyOf(current) !== key || !pendingSeats(current).includes(seat)) continue;
+    const playerId = current.players[seat]!.id;
+    if (current.phase !== "handOver") {
+      const count = (room.timeouts.get(playerId) ?? 0) + 1;
+      room.timeouts.set(playerId, count);
+      if (count >= AUTO_AFTER_TIMEOUTS) setAuto(room, playerId, true);
+    }
+    applyFor(room, seat, timeoutAction(current, seat));
+  }
+  afterMatchChange(room);
+  emitRoomUpdate(room);
+}
+
+/** 对局变化后：整场结束就发起「再来一场」，否则安排下一步的计时。 */
+function afterMatchChange(room: RoomState, wasFinished = false): void {
+  if (room.match?.phase === "finished") {
+    clearGameTimers(room);
+    if (!wasFinished && !room.rematch) startRematchVote(room);
+    return;
+  }
+  updateTurnTimer(room);
+}
+
+/** 开一场新的比赛：托管和超时次数都清零。 */
+function newMatch(room: RoomState): void {
+  for (const member of room.members) setAuto(room, member.id, false);
+  room.timeouts.clear();
+  clearGameTimers(room);
+  const seated = ([0, 1, 2, 3] as Seat[]).map((seat) => room.members.find((member) => member.seat === seat)!);
+  room.match = createMatch(seated.map((member) => ({ id: member.id, name: member.name })));
 }
 
 /** 未配置 ADMIN_TOKEN 时管理功能关闭。 */
@@ -400,6 +635,9 @@ function reassignMember(room: RoomState, previousId: string, nextId: string): vo
     member.id === previousId ? { ...member, id: nextId, connected: true } : member,
   );
   room.ownerId = swap(room.ownerId);
+  const timeouts = room.timeouts.get(previousId);
+  room.timeouts.delete(previousId);
+  if (timeouts !== undefined) room.timeouts.set(nextId, timeouts);
   room.chat = room.chat.map((entry) => ({ ...entry, senderId: swap(entry.senderId) }));
   if (room.rematch) room.rematch.accepted = new Set([...room.rematch.accepted].map(swap));
   if (room.match) {
@@ -453,6 +691,9 @@ io.on("connection", (socket) => {
       access: { ...DEFAULT_ROOM_ACCESS },
       chat: [],
       voice: new Map(),
+      stageStartedAt: 0,
+      botTimers: new Map(),
+      timeouts: new Map(),
     };
     rooms.set(room.code, room);
     socketRooms.set(socket.id, room.code);
@@ -524,6 +765,8 @@ io.on("connection", (socket) => {
       reassignMember(room, seat.id, socket.id);
       socketRooms.set(socket.id, room.code);
       void socket.join(room.code);
+      // 座位交还给本人：轮到他的话停掉人机，重新给他计时
+      updateTurnTimer(room);
       ack({ ok: true, data: snapshot(room, socket.id) });
       emitRoomUpdate(room);
       return;
@@ -662,11 +905,12 @@ io.on("connection", (socket) => {
     }
     const seated = ([0, 1, 2, 3] as Seat[]).map((seat) => room.members.find((member) => member.seat === seat));
     if (seated.some((member) => !member)) {
-      ack({ ok: false, error: "4 个座位都坐满后才能开始。" });
+      ack({ ok: false, error: "4 个座位都坐满后才能开始（空座位可以点「加人机」）。" });
       return;
     }
-    room.match = createMatch(seated.map((member) => ({ id: member!.id, name: member!.name })));
+    newMatch(room);
     room.status = "playing";
+    updateTurnTimer(room);
     ack({ ok: true, data: snapshot(room, socket.id) });
     emitRoomUpdate(room);
   });
@@ -700,7 +944,10 @@ io.on("connection", (socket) => {
     try {
       const wasFinished = room.match.phase === "finished";
       room.match = applyAction(room.match, socket.id, action);
-      if (!wasFinished && room.match.phase === "finished") startRematchVote(room);
+      // 自己动了一下：超时次数清零，托管也取消
+      room.timeouts.delete(socket.id);
+      setAuto(room, socket.id, false);
+      afterMatchChange(room, wasFinished);
       ack({ ok: true, data: snapshot(room, socket.id) });
       emitRoomUpdate(room);
     } catch (error) {
@@ -723,8 +970,8 @@ io.on("connection", (socket) => {
     if (room.members.every((member) => room.rematch!.accepted.has(member.id))) {
       clearTimeout(room.rematch.timer);
       delete room.rematch;
-      const seated = ([0, 1, 2, 3] as Seat[]).map((seat) => room.members.find((member) => member.seat === seat)!);
-      room.match = createMatch(seated.map((member) => ({ id: member.id, name: member.name })));
+      newMatch(room);
+      updateTurnTimer(room);
     }
     emitRoomUpdate(room);
   });
@@ -754,6 +1001,44 @@ io.on("connection", (socket) => {
     }
     removeMembers(room, [memberId], "你已被房主移出房间。");
     ack({ ok: true, data: undefined });
+    emitRoomUpdate(room);
+  });
+
+  socket.on("room:add-bot", (seat, ack) => {
+    const room = findRoomForSocket(socket.id);
+    if (!room || room.ownerId !== socket.id) {
+      ack({ ok: false, error: "只有房主可以加人机。" });
+      return;
+    }
+    if (room.status !== "waiting") {
+      ack({ ok: false, error: "对局开始后不能再加人机。" });
+      return;
+    }
+    if (!isSeat(seat) || room.members.some((member) => member.seat === seat) || room.members.length >= 4) {
+      ack({ ok: false, error: "这个座位已经有人了。" });
+      return;
+    }
+    const name = BOT_NAMES.find((candidate) => !nameTaken(room, candidate));
+    if (!name) {
+      ack({ ok: false, error: "人机已经够多了。" });
+      return;
+    }
+    room.members.push({ id: `bot:${randomUUID()}`, name, isHost: false, connected: true, seat, bot: true });
+    ack({ ok: true, data: undefined });
+    emitRoomUpdate(room);
+  });
+
+  socket.on("room:auto", (enabled, ack) => {
+    const room = findRoomForSocket(socket.id);
+    const member = room?.members.find((candidate) => candidate.id === socket.id);
+    if (!room || !member || room.status !== "playing") {
+      ack({ ok: false, error: "现在没有进行中的对局。" });
+      return;
+    }
+    setAuto(room, socket.id, enabled === true);
+    if (enabled !== true) room.timeouts.delete(socket.id);
+    ack({ ok: true, data: undefined });
+    updateTurnTimer(room);
     emitRoomUpdate(room);
   });
 
@@ -887,6 +1172,7 @@ export const testHooks = {
     const room = rooms.get(code);
     if (!room?.match) throw new Error("no match");
     room.match = { ...room.match, phase: "finished", winnerTeam: 0 };
+    clearGameTimers(room);
     startRematchVote(room);
     emitRoomUpdate(room);
   },

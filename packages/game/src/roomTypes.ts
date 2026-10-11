@@ -8,6 +8,10 @@ export interface LobbyMember {
 	isHost: boolean;
 	connected: boolean;
 	seat: Seat | null;
+	/** 人机（咕噜一号、二号……），由房主在空座位上加。 */
+	bot?: boolean;
+	/** 托管中：连续超时 2 次，或者自己打开；由人机代打，自己动一下或点「取消托管」就交还。 */
+	auto?: boolean;
 }
 
 export interface RoomChatMessage {
@@ -51,6 +55,8 @@ export interface LobbyRoomSnapshot {
 	rematch?: RematchState;
 	/** 当前在语音里的成员。 */
 	voice: VoiceParticipant[];
+	/** 真人这一步的剩余时间（毫秒），到点按超时处理；人机、托管、离线的人行动时没有。 */
+	turnRemainingMs?: number;
 }
 
 export interface VoiceParticipant {
@@ -82,7 +88,7 @@ export interface PublicRoomSummary {
 	open: boolean;
 	allowSpectators: boolean;
 	spectators: number;
-	players: { name: string; connected: boolean; seat: Seat | null }[];
+	players: { name: string; connected: boolean; seat: Seat | null; bot?: boolean }[];
 	teamLevels?: [number, number];
 	handNumber?: number;
 }
@@ -113,6 +119,10 @@ export interface ClientToServerEvents {
 	"lobby:get": (ack: RoomAck<PublicRoomSummary[]>) => void;
 	"room:rematch": (accept: boolean, ack: RoomAck<void>) => void;
 	"room:kick": (memberId: string, ack: RoomAck<void>) => void;
+	/** 房主在等待大厅的空座位上加一个人机。 */
+	"room:add-bot": (seat: Seat, ack: RoomAck<void>) => void;
+	/** 自己打开 / 取消托管。 */
+	"room:auto": (enabled: boolean, ack: RoomAck<void>) => void;
 	"room:dissolve": (ack: RoomAck<void>) => void;
 	"admin:verify": (token: string, ack: RoomAck<void>) => void;
 	"admin:dissolve": (payload: { roomId: string; token: string }, ack: RoomAck<void>) => void;
