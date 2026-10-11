@@ -13,7 +13,7 @@ import { GAME_ID } from "./tutorialGame.js";
 import TutorialMode from "./TutorialMode.js";
 import { socket } from "./socket.js";
 import { ThemeToggle, useTheme } from "./theme.js";
-import { MusicToggle, useBgm, type BgmTrack } from "./bgm.js";
+import { SoundToggle, useBgm, type BgmTrack } from "./gm-sound.js";
 import { useVoice } from "./voice.js";
 
 type EntryMode = "create" | "join";
@@ -199,7 +199,7 @@ function App() {
   const voice = useVoice(room);
   // 白天 / 夜间画面：首页、等待大厅、牌桌共用，顶栏按钮随时切换；和游戏中心、其他游戏共用同一个选择。
   const [theme, toggleTheme] = useTheme();
-  const themeToggle = <><ThemeToggle theme={theme} onToggle={toggleTheme} /><MusicToggle /></>;
+  const themeToggle = <><ThemeToggle theme={theme} onToggle={toggleTheme} /><SoundToggle /></>;
   // 解散房间等确认用像素弹窗。
   const [confirm, confirmDialog] = useConfirm();
   // 新手教程：首页或等候房间点进来（地址带 ?tutorial 时直接打开，游戏中心可以直接链过来）
