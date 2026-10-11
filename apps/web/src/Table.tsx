@@ -19,6 +19,9 @@ import CardView, { cardName, preloadCardImages } from "./CardView.js";
 import GameRules from "./GameRules.js";
 import { GameRoomMenu, SpectateBar } from "./RoomExtras.js";
 import { socket } from "./socket.js";
+import { Coach, TipToast } from "./tutorial/Coach.js";
+import { useFirstTimeTips } from "./tutorial/tips.js";
+import { detectTips, GAME_ID, hintFor, matchStepKey, TIPS, type Hint } from "./tutorialGame.js";
 
 const PLACE_NAMES = ["头游", "二游", "三游", "末游"];
 type Position = "bottom" | "right" | "top" | "left";
@@ -58,10 +61,10 @@ function HandRow({ cards, level, selected, eligible, onToggle }: {
   }, [cards.length]);
 
   return (
-    <div className="hand-row" ref={rowRef}>
+    <div className="hand-row" ref={rowRef} data-tutorial="hand">
       <div className="hand-cards">
         {cards.map((card, index) => (
-          <div className="hand-slot" key={card.id} style={index === 0 ? undefined : { marginLeft: `calc(${step}px - var(--card-w))` }}>
+          <div className="hand-slot" key={card.id} data-tutorial={`card:${card.id}`} style={index === 0 ? undefined : { marginLeft: `calc(${step}px - var(--card-w))` }}>
             <CardView
               card={card}
               level={level}
@@ -103,7 +106,7 @@ function SeatPlate({ seat, match, member, position, viewSeat }: {
   const partner = viewSeat !== null && (seat + 2) % 4 === viewSeat;
   const count = match.hand.cardCounts[seat] ?? 0;
   return (
-    <div className={`seat-plate seat-${position}${active ? " seat-active" : ""}${member?.connected === false ? " seat-offline" : ""}`}>
+    <div className={`seat-plate seat-${position}${active ? " seat-active" : ""}${member?.connected === false ? " seat-offline" : ""}`} data-tutorial={`plate-${position}`}>
       <span className={`team-dot team-${seat % 2}`} aria-hidden="true" />
       <strong>{player.name}</strong>
       {partner && <span className="seat-tag">队友</span>}
@@ -133,6 +136,10 @@ function Table({
   watchId,
   onWatch,
   onLeave,
+  selfMemberId,
+  mode = "online",
+  finalActions,
+  onSelection,
 }: {
   room: LobbyRoomSnapshot;
   busy: boolean;
@@ -153,12 +160,21 @@ function Table({
   onWatch: (playerId: string) => void;
   /** 观战的人离开。 */
   onLeave: () => void;
+  /** 自己在 room.members 里的 id（教程里是固定值，默认 socket.id）。 */
+  selfMemberId?: string;
+  /** online：真实对局；tutorial：剧本进行中（不出提示和小贴士）；practice：练习局（随时能看提示）。 */
+  mode?: "online" | "tutorial" | "practice";
+  /** 练习局结算框里替代「准备 / 再来一场」的按钮。 */
+  finalActions?: ReactNode;
+  /** 选中的牌变了（教程用来把高亮挪到「出牌」）。 */
+  onSelection?: (cards: readonly Card[]) => void;
 }) {
   useEffect(() => preloadCardImages(), []);
   const match = room.match!;
   const hand = match.hand;
   // 观战的人没有座位：牌桌按 watchId 那位玩家的座位摆（下方是他），但什么都不能点。
-  const spectating = !room.members.some((member) => member.id === socket.id);
+  const selfId = selfMemberId ?? socket.id;
+  const spectating = !room.members.some((member) => member.id === selfId);
   const mySeat = spectating ? Math.max(0, match.players.findIndex((player) => player.id === watchId)) as Seat : match.mySeat ?? 0;
   // 观战开了「看手牌」时服务器附上四家的手牌；没开就只有张数。
   const myCards = spectating ? hand.allCards?.[mySeat] ?? [] : hand.myCards;
@@ -192,7 +208,7 @@ function Table({
     return () => window.clearInterval(timer);
   }, [turnDeadline]);
   const turnSeconds = turnDeadline === null ? null : Math.max(0, Math.ceil((turnDeadline - now) / 1000));
-  const meMember = room.members.find((member) => member.id === socket.id);
+  const meMember = room.members.find((member) => member.id === selfId);
   const autoOn = !spectating && meMember?.auto === true;
   const accepted = new Set(rematch?.acceptedIds ?? []);
   const myId = match.players[mySeat]?.id ?? "";
@@ -204,6 +220,7 @@ function Table({
   useEffect(() => setSelected(new Set()), [match.phase, hand.number]);
 
   const selectedCards = useMemo(() => myCards.filter((card) => selected.has(card.id)), [myCards, selected]);
+  useEffect(() => onSelection?.(selectedCards), [selectedCards]);
   const readings = useMemo(() => detectCombos(selectedCards, level), [selectedCards, level]);
   const legal = readings.filter((combo) => beats(combo, hand.lastPlay?.combo ?? null));
 
@@ -230,6 +247,35 @@ function Table({
       return next;
     });
   }
+
+  // 「提示」：只有自己和人机时（练习局，或者一个人加人机开的房间）
+  const stepKey = matchStepKey(match);
+  const botsOnly = room.members.every((member) => member.id === selfId || member.bot);
+  const needMe = myTurn || Boolean(mustTribute) || Boolean(mustReturn);
+  const canAsk = !spectating && !autoOn && needMe && (mode === "practice" || (mode === "online" && botsOnly));
+  const [coachHint, setCoachHint] = useState<{ key: string; hint: Hint } | null>(null);
+  const shownHint = coachHint && coachHint.key === stepKey && canAsk ? coachHint.hint : null;
+  function askHint() {
+    if (!canAsk) return;
+    const hint = hintFor(match, myId);
+    setCoachHint({ key: stepKey, hint });
+    if (hint.cardIds.length > 0) setSelected(new Set(hint.cardIds));
+  }
+  useEffect(() => {
+    if (!canAsk) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (event.key === "h" || event.key === "H") askHint();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // 真实对局里「第一次遇到」的小贴士：每走一步计数加一
+  const stepCounter = useRef({ key: stepKey, count: 0 });
+  if (stepCounter.current.key !== stepKey) stepCounter.current = { key: stepKey, count: stepCounter.current.count + 1 };
+  const tips = useFirstTimeTips(GAME_ID, stepCounter.current.count, () => detectTips(match, autoOn), TIPS, mode === "online" && !spectating);
 
   function play(combo?: Combo) {
     onAction({ type: "play", cardIds: [...selected], ...(combo ? { combo } : {}) });
@@ -263,18 +309,18 @@ function Table({
       <header className="game-topbar">
         {brand}
         {room.code && <span className="room-code-chip" title="房间码">{room.code}</span>}
-        <span className="level-chip" title="本局打的级数">本局打 <b>{levelText(level)}</b></span>
-        <span className="team-levels">
+        <span className="level-chip" title="本局打的级数" data-tutorial="level">本局打 <b>{levelText(level)}</b></span>
+        <span className="team-levels" data-tutorial="team-levels">
           <span><span className={`team-dot team-${myTeam}`} />{teamName(myTeam)} {levelText(match.teamLevels[myTeam]!)}</span>
           <span><span className={`team-dot team-${1 - myTeam}`} />{teamName(1 - myTeam)} {levelText(match.teamLevels[1 - myTeam]!)}</span>
         </span>
-        <span className={myTurn || mustTribute || mustReturn ? "turn-indicator my-turn" : "turn-indicator"}>
+        <span className={myTurn || mustTribute || mustReturn ? "turn-indicator my-turn" : "turn-indicator"} data-tutorial="turn">
           <span className="turn-dot" />{turnText}{turnSeconds !== null && match.phase !== "handOver" && <b className="turn-seconds">{turnSeconds} 秒</b>}
         </span>
         <span className="topbar-feedback" role="status">{error ? <span className="error-text">{error}</span> : notice}</span>
         <GameRules />
-        <GameRoomMenu room={room} />
-        {isHost && <button type="button" className="dissolve-button" onClick={onDissolve}>解散房间</button>}
+        {mode === "online" && <GameRoomMenu room={room} />}
+        {mode === "online" && isHost && <button type="button" className="dissolve-button" onClick={onDissolve}>解散房间</button>}
         {themeToggle}
         {connection}
       </header>
@@ -285,14 +331,14 @@ function Table({
           return (
             <div className={`felt-seat felt-${position}`} key={position}>
               <SeatPlate seat={seat} match={match} member={room.members.find((member) => member.id === match.players[seat]?.id)} position={position} viewSeat={mySeat} />
-              <div className="felt-action"><ActionDisplay action={hand.actions[seat] ?? null} level={level} /></div>
+              <div className="felt-action" data-tutorial={hand.actions[seat]?.kind === "play" ? `play-${position}` : undefined}><ActionDisplay action={hand.actions[seat] ?? null} level={level} /></div>
             </div>
           );
         })}
         <div className="felt-seat felt-bottom">
-          <div className="felt-action"><ActionDisplay action={hand.actions[mySeat] ?? null} level={level} /></div>
+          <div className="felt-action" data-tutorial={hand.actions[mySeat]?.kind === "play" ? "play-bottom" : undefined}><ActionDisplay action={hand.actions[mySeat] ?? null} level={level} /></div>
         </div>
-        {tributeSummary && !handStarted && <p className="tribute-note">{tributeSummary}</p>}
+        {tributeSummary && !handStarted && <p className="tribute-note" data-tutorial="tribute-note">{tributeSummary}</p>}
       </section>
 
       <section className={`my-area${myTurn || mustTribute || mustReturn ? " my-area-active" : ""}`} aria-label={spectating ? `${name(mySeat)}的手牌` : "你的手牌"}>
@@ -307,21 +353,22 @@ function Table({
           ) : <span className="selection-hint">{eligible ? (mustTribute ? "请选择一张最大的牌进贡" : "请选择一张 10 以下的牌还贡") : selectionHint}</span>}
           <div className="my-actions">
             {mustTribute && (
-              <button type="button" className="primary-button" disabled={busy || selected.size !== 1} onClick={() => onAction({ type: "tribute", cardId: [...selected][0]! })}>进贡</button>
+              <button type="button" className="primary-button" data-tutorial="btn-tribute" disabled={busy || selected.size !== 1} onClick={() => onAction({ type: "tribute", cardId: [...selected][0]! })}>进贡</button>
             )}
             {mustReturn && (
-              <button type="button" className="primary-button" disabled={busy || selected.size !== 1} onClick={() => onAction({ type: "returnTribute", cardId: [...selected][0]! })}>还贡</button>
+              <button type="button" className="primary-button" data-tutorial="btn-return" disabled={busy || selected.size !== 1} onClick={() => onAction({ type: "returnTribute", cardId: [...selected][0]! })}>还贡</button>
             )}
+            {canAsk && <button type="button" className="quiet-button hint-button" data-tutorial="btn-hint" onClick={askHint} title="让咕噜嘎说说它会怎么出（键盘 H）">提示</button>}
             {match.phase === "playing" && (
               <>
                 <button type="button" className="quiet-button" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>重选</button>
-                <button type="button" className="quiet-button" disabled={!myTurn || busy || !hand.lastPlay} onClick={() => onAction({ type: "pass" })}>不出</button>
-                {legal.length > 1 ? legal.map((combo) => (
-                  <button type="button" className="primary-button" key={`${combo.type}-${combo.key}`} disabled={!myTurn || busy} onClick={() => play(combo)}>
+                <button type="button" className="quiet-button" data-tutorial={myTurn && hand.lastPlay ? "btn-pass" : undefined} disabled={!myTurn || busy || !hand.lastPlay} onClick={() => onAction({ type: "pass" })}>不出</button>
+                {legal.length > 1 ? legal.map((combo, index) => (
+                  <button type="button" className="primary-button" data-tutorial={myTurn && index === 0 ? "btn-play" : undefined} key={`${combo.type}-${combo.key}`} disabled={!myTurn || busy} onClick={() => play(combo)}>
                     出 {describeCombo(combo, level)}
                   </button>
                 )) : (
-                  <button type="button" className="primary-button" disabled={!myTurn || busy || legal.length !== 1} onClick={() => play()}>出牌</button>
+                  <button type="button" className="primary-button" data-tutorial={myTurn ? "btn-play" : undefined} disabled={!myTurn || busy || legal.length !== 1} onClick={() => play()}>出牌</button>
                 )}
               </>
             )}
@@ -344,7 +391,7 @@ function Table({
                 ? (spectating ? `${teamName(match.winnerTeam ?? 0)}赢下了整场` : match.winnerTeam === myTeam ? "我们赢了整场！" : "对方赢下了整场")
                 : `${teamName(match.lastResult?.winnerTeam ?? 0)}升 ${match.lastResult?.upgrade} 级`}
             </h2>
-            <ol className="result-order">
+            <ol className="result-order" data-tutorial="result">
               {(match.lastResult?.finishOrder ?? []).map((seat, index) => (
                 <li key={seat}>
                   <span className="result-place">{PLACE_NAMES[index]}</span>
@@ -355,7 +402,7 @@ function Table({
             </ol>
             {match.phase === "handOver" && match.lastResult && (
               <>
-                <p className="result-levels">
+                <p className="result-levels" data-tutorial="result-levels">
                   {teamName(myTeam)}打 {levelText(match.teamLevels[myTeam]!)} · {teamName(1 - myTeam)}打 {levelText(match.teamLevels[1 - myTeam]!)}
                   {match.lastResult.aReset !== null && <><br />{teamName(match.lastResult.aReset)}打 A 三次未过，退回 2。</>}
                   {match.lastResult.aFailed !== null && match.lastResult.aReset === null && <><br />{teamName(match.lastResult.aFailed)}本局未能过 A。</>}
@@ -366,12 +413,13 @@ function Table({
                   ))}
                 </div>
                 {!spectating && (
-                  <button type="button" className="primary-button" disabled={busy || match.ready[mySeat]} onClick={() => onAction({ type: "ready" })}>
+                  <button type="button" className="primary-button" data-tutorial={match.ready[mySeat] ? undefined : "btn-ready"} disabled={busy || match.ready[mySeat]} onClick={() => onAction({ type: "ready" })}>
                     {match.ready[mySeat] ? "等待其他玩家准备" : `准备下一局${turnSeconds !== null ? `（${turnSeconds} 秒）` : ""}`}
                   </button>
                 )}
               </>
             )}
+            {finalActions && <div className="result-actions">{finalActions}</div>}
             {match.phase === "finished" && rematch && (
               <>
                 <p className="result-levels">再来一场？{secondsLeft} 秒内未确认视为退出，退出的玩家会被移出房间。</p>
@@ -397,6 +445,22 @@ function Table({
           </section>
         </div>
       )}
+
+      {shownHint && (
+        <Coach
+          bubble
+          view={{
+            key: `hint-${stepKey}`,
+            say: shownHint.say,
+            ...(shownHint.note ? { note: shownHint.note } : {}),
+            anchor: shownHint.anchor,
+            focus: false,
+            face: "think",
+            actions: <button className="quiet-button" type="button" onClick={() => setCoachHint(null)}>知道了</button>,
+          }}
+        />
+      )}
+      {tips.tip && <TipToast tip={tips.tip} onClose={tips.dismiss} onNever={tips.never} />}
     </div>
   );
 }

@@ -654,7 +654,7 @@ function followAdvice(view: MatchView, seat: Seat, ctx: Ctx): BotAdvice {
 	if (normal && normal.gain >= threshold) {
 		const reason = why
 			? `${why}，出${comboText(normal.play.combo, level)}。`
-			: `${comboText(normal.play.combo, level)}压得住，也不拆别的牌。`;
+			: `出${comboText(normal.play.combo, level)}正好压住，也不拆别的牌。`;
 		return { action: playAction(normal.play), reason };
 	}
 

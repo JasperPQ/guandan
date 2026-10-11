@@ -9,4 +9,4 @@
 :root[data-theme="day"] .game-shell :is(.seat-plate, .level-chip) { color: #f1ece0; }
 :root[data-theme="day"] .game-shell .level-chip b { color: var(--gold); }
 /* 自己的座位牌在手牌区里，白天是浅底，字用深色（原来跟着上一条成了浅字，看不见名字） */
-:root[data-theme="day"] .game-shell .seat-plate.seat-bottom:not(.seat-active) { color: var(--text); }
+:root[data-theme="day"] .game-shell .seat-plate.seat-bottom { color: var(--text); }

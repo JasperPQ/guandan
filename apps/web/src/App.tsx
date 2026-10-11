@@ -7,6 +7,10 @@ import GameRules from "./GameRules.js";
 import RoomChat from "./RoomChat.js";
 import { roomRole, RoomSettingsPanel, SeatSwitch } from "./RoomExtras.js";
 import Table from "./Table.js";
+import { TutorialInvite } from "./tutorial/Invite.js";
+import { readTutorial } from "./tutorial/storage.js";
+import { GAME_ID } from "./tutorialGame.js";
+import TutorialMode from "./TutorialMode.js";
 import { socket } from "./socket.js";
 import { ThemeToggle, useTheme } from "./theme.js";
 import { useVoice } from "./voice.js";
@@ -194,6 +198,24 @@ function App() {
   const themeToggle = <ThemeToggle theme={theme} onToggle={toggleTheme} />;
   // 解散房间等确认用像素弹窗。
   const [confirm, confirmDialog] = useConfirm();
+  // 新手教程：首页或等候房间点进来（地址带 ?tutorial 时直接打开，游戏中心可以直接链过来）
+  const [tutorialOpen, setTutorialOpen] = useState(() => new URLSearchParams(window.location.search).has("tutorial"));
+  function closeTutorial() {
+    setTutorialOpen(false);
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("tutorial")) {
+      params.delete("tutorial");
+      const query = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    }
+  }
+  // 在等候房间里看教程时房主开局了：回到牌桌（不然这一步会超时转托管）
+  useEffect(() => {
+    if (tutorialOpen && room?.status === "playing") {
+      closeTutorial();
+      setNotice("对局开始了，教程先停在这里。");
+    }
+  }, [tutorialOpen, room?.status]);
 
   // 在房间里时服务端不推送在线牌桌列表；回到首页时主动拉一次最新的。
   useEffect(() => {
@@ -316,6 +338,14 @@ function App() {
     }
   }
 
+  if (tutorialOpen && room?.status !== "playing") {
+    return (
+      <main className="game-shell">
+        <TutorialMode name={name} brand={<Brand />} themeToggle={themeToggle} waitingRoom={room?.code} onExit={closeTutorial} />
+      </main>
+    );
+  }
+
   if (room?.status === "playing" && room.match) {
     const players = room.match.players;
     const watched = players.some((player) => player.id === watchId) ? watchId : players[0]!.id;
@@ -370,6 +400,17 @@ function App() {
           />
           {error && <p className="feedback error-text" role="alert">{error}</p>}
           {notice && <p className="feedback" role="status">{notice}</p>}
+          {!roomRole(room).spectating && (
+            <div className="waiting-tutorial">
+              <TutorialInvite
+                record={readTutorial(GAME_ID)}
+                title="等人的时候，先学一下？"
+                text="咕噜嘎在真牌桌上带你走一遍，不会离开房间，房主一开局就自动回来。"
+                again="新手教程"
+                onOpen={() => setTutorialOpen(true)}
+              />
+            </div>
+          )}
           <div className="waiting-chat"><RoomChat room={room} voice={voice} /></div>
         </>
       ) : (
@@ -379,6 +420,13 @@ function App() {
               <div className="eyebrow">在线对战 · 4 人两队</div>
               <h1>掼蛋</h1>
               <p>创建一张牌桌，或输入房间码加入朋友的对局。两副牌、逢人配、从 2 打到 A。</p>
+              <TutorialInvite
+                record={readTutorial(GAME_ID)}
+                title="第一次玩？5 分钟学会"
+                text="咕噜嘎在真牌桌上带你走一遍，学完和人机练一局。"
+                again="再看一遍新手教程"
+                onOpen={() => setTutorialOpen(true)}
+              />
               <div className="gd-card-fan" aria-hidden="true">
                 {[{ suit: "J", rank: 17 }, { suit: "S", rank: 14 }, { suit: "H", rank: 13 }, { suit: "H", rank: 2 }].map((card) => (
                   <img key={`${card.suit}${card.rank}`} src={cardImage({ id: "", ...card } as Parameters<typeof cardImage>[0])} alt="" />
