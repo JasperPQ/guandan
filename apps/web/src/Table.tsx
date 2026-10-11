@@ -16,7 +16,9 @@ import {
   type SeatAction,
 } from "@guandan/game";
 import CardView, { cardName, preloadCardImages } from "./CardView.js";
+import { denySound, selectSound, useGameSfx } from "./game-sfx.js";
 import GameRules from "./GameRules.js";
+import { useSfxCountdown } from "./gm-sound.js";
 import { GameRoomMenu, SpectateBar } from "./RoomExtras.js";
 import { socket } from "./socket.js";
 import { Coach, TipToast } from "./tutorial/Coach.js";
@@ -64,7 +66,7 @@ function HandRow({ cards, level, selected, eligible, onToggle }: {
     <div className="hand-row" ref={rowRef} data-tutorial="hand">
       <div className="hand-cards">
         {cards.map((card, index) => (
-          <div className="hand-slot" key={card.id} data-tutorial={`card:${card.id}`} style={index === 0 ? undefined : { marginLeft: `calc(${step}px - var(--card-w))` }}>
+          <div className="hand-slot" key={card.id} data-tutorial={`card:${card.id}`} data-sfx="none" style={index === 0 ? undefined : { marginLeft: `calc(${step}px - var(--card-w))` }}>
             <CardView
               card={card}
               level={level}
@@ -234,9 +236,13 @@ function Table({
     : mustReturn ? new Set(returnCandidates(myCards).map((card) => card.id)) : null;
 
   function toggle(cardId: string) {
-    if (spectating) return;
+    // 点手牌的声音在这里放（牌上的 data-sfx="none" 关掉了默认的轻点）
+    if (spectating || (eligible && !eligible.has(cardId))) {
+      denySound();
+      return;
+    }
+    selectSound(!selected.has(cardId));
     if (eligible) {
-      if (!eligible.has(cardId)) return;
       setSelected((current) => (current.has(cardId) ? new Set() : new Set([cardId])));
       return;
     }
@@ -252,6 +258,9 @@ function Table({
   const stepKey = matchStepKey(match);
   const botsOnly = room.members.every((member) => member.id === selfId || member.bot);
   const needMe = myTurn || Boolean(mustTribute) || Boolean(mustReturn);
+  // 动作音效（game-sfx.ts）和自己最后 5 秒的倒计时滴答
+  useGameSfx(match, spectating ? null : mySeat, needMe, turnSeconds);
+  useSfxCountdown(needMe, turnSeconds);
   const canAsk = !spectating && !autoOn && needMe && (mode === "practice" || (mode === "online" && botsOnly));
   const [coachHint, setCoachHint] = useState<{ key: string; hint: Hint } | null>(null);
   const shownHint = coachHint && coachHint.key === stepKey && canAsk ? coachHint.hint : null;

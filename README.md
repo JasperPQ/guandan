@@ -71,3 +71,7 @@ pm2 按仓库根目录的 `ecosystem.config.cjs` 直接启动一个 `node --impo
 进了房间（等候房间、对局、观战）和新手教程里循环放 `apps/web/public/bgm/guandan.mp3`，首页和房间列表不放。曲子是他用 Suno 做的，原文件在桌面 `bgm v1/掼蛋.mp3`（2026-10-11 接入）。播放器是 `apps/web/src/bgm.tsx`（大厅和各游戏是同一份文件，改了要同步到所有仓库）：一个页面只有一个播放器，从等候房间进牌桌不会从头放；循环处交叉淡化；切到别的标签页时暂停。顶栏的 ♪ 按钮能开关、调音量，设置全站共用（localStorage `gm-music`、`gm-music-volume`，默认开、音量 60）。浏览器要求先点过页面才能出声，从首页点进房间正好满足。
 
 换曲子：把新文件放进 `apps/web/public/bgm/`，用 `~/miniconda3/envs/quant/bin/python -I ~/projects/qa-reports/tools/bgm-analyze.py <文件>` 量出 gain / start / end，改 `App.tsx` 里的 `BGM`。本地检查：`URL=http://localhost:<网页端口>/ node ~/projects/qa-reports/tools/bgm-check.mjs`（进房间、开局、离开、开关、顶栏是否被挤成两行）。
+
+音效（2026-10-11）：在 `apps/web/src/game-sfx.ts`。掼蛋的服务器不下发事件，所以对比前后两次对局视图推断刚发生的动作：出牌 card（按张数）、不出 pass、炸弹 card + boom、同花顺（招牌：一串上行亮音 + 闷响）、天王炸（招牌：呼啸上冲 + 炸开 + 亮晶晶）、剩 1–2 张两声嘀、头游 sparkle、其余走完 score、进贡 card + 对方 draw、还贡 card + draw、新一局 shuffle + deal、抗贡 sparkle、本方升级 score / 对方升级 bust、整场结束 gameOver、别人点准备一声轻嗒、自己超时 timeout（自己的动作来了、上次看到的倒计时到 1 秒、而且好几秒没点过东西）。自己的动作响亮，别人的减半（观战都算别人的）；第一次拿到对局不出声，一下跳好几手（重连、教程快进）只放最后一手。
+
+选牌：点手牌选上 / 放下响 select，不能点的时候（进贡 / 还贡时点了不能选的牌、观战点手牌）响 deny；服务器拒绝操作时响 error；教程里没按剧本走响 deny。自己最后 5 秒每秒一声、轮到自己响 yourTurn（`useSfxCountdown`、`useGameSfx`，都在牌桌组件里调）；有人进出房间、开局、收到聊天由 `App.tsx` 的 `useRoomSfx` 负责。开发模式下放过的声音名字记在 `window.__sfxLog`，自测脚本 `~/projects/qa-reports/tools/guandan-sfx.mjs` 靠它确认每种动作都响了（教程走一遍 + 联机和人机打一局）。声音面板（顶栏 ♪：音乐 / 音效 / 语音）和合成音色在全站共用的 `gm-sound.tsx`，别在这里改。

@@ -13,7 +13,8 @@ import { GAME_ID } from "./tutorialGame.js";
 import TutorialMode from "./TutorialMode.js";
 import { socket } from "./socket.js";
 import { ThemeToggle, useTheme } from "./theme.js";
-import { SoundToggle, useBgm, type BgmTrack } from "./gm-sound.js";
+import { SoundToggle, useBgm, useRoomSfx, type BgmTrack } from "./gm-sound.js";
+import { errorSound } from "./game-sfx.js";
 import { useVoice } from "./voice.js";
 
 type EntryMode = "create" | "join";
@@ -191,7 +192,12 @@ function App() {
   const [room, setRoom] = useState<LobbyRoomSnapshot | null>(null);
   const [connected, setConnected] = useState(socket.connected);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setErrorText] = useState("");
+  // 出错（服务器拒绝了操作、房间出错、输入不对）时响一声
+  const setError = (message: string) => {
+    if (message) errorSound();
+    setErrorText(message);
+  };
   const [notice, setNotice] = useState("");
   const [lobbyRooms, setLobbyRooms] = useState<PublicRoomSummary[]>([]);
   // 观战时从谁的座位看（默认座位 1）。
@@ -205,6 +211,9 @@ function App() {
   // 新手教程：首页或等候房间点进来（地址带 ?tutorial 时直接打开，游戏中心可以直接链过来）
   const [tutorialOpen, setTutorialOpen] = useState(() => new URLSearchParams(window.location.search).has("tutorial"));
   useBgm(room || tutorialOpen ? BGM : null);
+  // 房间里的提示音：有人进出、开局、收到聊天（gm-sound.tsx）
+  const lastChat = room?.chat[room.chat.length - 1];
+  useRoomSfx(room ? { members: room.members.length + room.spectators.length, playing: room.status === "playing", chatCount: room.chat.length, lastChatMine: lastChat?.senderId === socket.id } : null);
   function closeTutorial() {
     setTutorialOpen(false);
     const params = new URLSearchParams(window.location.search);
