@@ -10,3 +10,9 @@
 :root[data-theme="day"] .game-shell .level-chip b { color: var(--gold); }
 /* 自己的座位牌在手牌区里，白天是浅底，字用深色（原来跟着上一条成了浅字，看不见名字） */
 :root[data-theme="day"] .game-shell .seat-plate.seat-bottom { color: var(--text); }
+
+/* 全屏背景：白天版罩色变浅 */
+:root[data-theme="day"] .gd-backdrop { background: #efe8dc; }
+:root[data-theme="day"] .gd-backdrop-veil { background: #ffffff; opacity: 0.25; }
+:root[data-theme="day"] .gd-backdrop-art--day { display: block; }
+:root[data-theme="day"] .gd-backdrop-art--night { display: none; }

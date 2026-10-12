@@ -27,6 +27,18 @@ function normalizeRoomCode(value: string): string {
   return value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
 }
 
+/** 全屏背景：把对局场景铺满窗口（16:9 居中裁切），上面盖一层罩色让面板更突出。首页和等候房间放在 <main> 的第一个子元素。 */
+function GdBackdrop() {
+  const base = import.meta.env.BASE_URL;
+  return (
+    <div className="gd-backdrop" aria-hidden="true">
+      <div className="gd-backdrop-art gd-backdrop-art--day" style={{ backgroundImage: `url(${base}art/bg/day.png)` }} />
+      <div className="gd-backdrop-art gd-backdrop-art--night" style={{ backgroundImage: `url(${base}art/bg/night.png)` }} />
+      <div className="gd-backdrop-veil" />
+    </div>
+  );
+}
+
 function Brand() {
   return (
     <a className="brand" href={import.meta.env.BASE_URL} aria-label="掼蛋首页">
@@ -388,7 +400,8 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell gd-page">
+      <GdBackdrop />
       <header className="topbar">
         <Brand />
         <div className="topbar-right">
